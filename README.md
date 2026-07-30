@@ -1,0 +1,359 @@
+# Claude Usage Widget
+
+macOS 메뉴바와 알림센터 위젯에서 **Claude 사용량**(5시간 한도 창 / 주간)을 확인하는 프로젝트입니다.
+
+두 개의 데이터 소스를 씁니다:
+
+1. **claude.ai 실측 (기본·권장)** — Claude 데스크톱 앱의 로그인 쿠키를 **Claude Safe Storage 키**로 복호화해 `claude.ai`에서 서버가 계산한 **실제 소진율(%)** 과 정확한 리셋 시각을 가져옵니다. `/usage`가 보여주는 값과 같고, Claude Code·데스크톱·웹을 모두 포함한 **계정 전체** 사용량입니다.
+2. **로컬 로그 추정 (폴백·상세)** — `~/.claude` 세션 로그를 파싱해 토큰·비용·모델별 분해를 만듭니다. 실측을 못 가져올 때(데스크톱 앱 미설치/미로그인)의 대체 표시이자, 서버가 주지 않는 토큰 상세의 출처입니다.
+
+---
+
+## 📋 개요
+
+- **메뉴바 앱** — 5초 간격 로컬 갱신 + 서버 실측 조회(주기 설정 가능, 기본 60초). 아이콘 옆에 5시간 창 소진율(%)이 뜨고, 클릭하면 상세 패널이 열립니다.
+- **알림센터 위젯** — 같은 데이터를 작은/중간 크기 위젯으로 표시합니다.
+
+두 개를 함께 두는 이유는 WidgetKit의 갱신 주기 때문입니다. 위젯 타임라인은 `.after(30초)`를 요청해도 시스템이 그대로 지켜주지 않고 실질 수 분~수십 분 간격으로 깨우며, 하루 갱신 예산도 제한됩니다. **초 단위 실시간은 메뉴바 앱이 담당하고, 위젯은 같은 데이터를 느리게 따라가는 보조 표시**입니다.
+
+---
+
+## 🔓 실측 사용량 — Claude Safe Storage로 계정 전체 사용량 불러오기
+
+Claude 데스크톱 앱(Electron)은 Chromium과 같은 방식으로 로그인 쿠키를 암호화해 저장합니다. 그 암호화 키가 macOS 키체인의 **`Claude Safe Storage`** 항목입니다. 이 키로 쿠키를 풀어 `claude.ai` API에 그대로 붙으면 서버가 계산한 실제 사용량을 받을 수 있습니다.
+
+### 복호화 절차
+
+```
+1. 키체인:  security 항목 "Claude Safe Storage" / "Claude Key"  →  base64 문자열 키(24바이트)
+2. 키 유도: PBKDF2-HMAC-SHA1(key, salt="saltysalt", 반복 1003회, 16바이트)
+3. 복호화:  AES-128-CBC, IV = 공백 16바이트
+            대상은 Cookies DB의 encrypted_value 에서 "v10"/"v11" 3바이트 접두사를 뺀 본문
+4. 접두사:  최신 Chromium은 평문 앞에 sha256(host_key) 32바이트를 붙인다 → 있으면 떼어낸다
+```
+
+- 쿠키 DB: `~/Library/Application Support/Claude/Cookies` (SQLite). 잠금·WAL 문제를 피하려고 임시 사본을 떠서 읽습니다.
+- 필요한 쿠키: `sessionKey`(로그인 세션), `lastActiveOrg`(조직 UUID). 실제로는 `claude.ai` 도메인 쿠키 전체를 브라우저처럼 함께 보냅니다(`cf_clearance` 등 포함).
+
+### 사용량 API
+
+```
+GET https://claude.ai/api/organizations/{org_uuid}/usage
+Cookie: <복호화한 claude.ai 쿠키 전체>
+```
+
+```jsonc
+{
+  "five_hour": { "utilization": 62.0, "resets_at": "2026-07-29T13:39:59.6+00:00" },
+  "seven_day": { "utilization": 39.0, "resets_at": "2026-08-04T05:59:59.6+00:00" },
+  "seven_day_opus": null,          // Max 요금제의 주간 Opus 한도(있으면)
+  "limits": [ /* session·weekly_all 등 */ ]
+}
+```
+
+조직은 쿠키의 `lastActiveOrg`를 먼저 쓰고, 실패하면 `/api/organizations`에서 `chat` 권한을 가진 구독 조직으로 다시 시도합니다.
+
+### 경계·프라이버시
+
+- **키체인 접근 허용 창**: 이 항목은 Claude 데스크톱 앱이 만든 것이라, 이 앱이 처음 읽을 때 macOS가 표준 허용 창을 띄웁니다. **"항상 허용"** 을 누르면 이후엔 조용히 읽습니다. ad-hoc 서명이라 앱을 다시 빌드하면 서명이 바뀌어 창이 다시 뜰 수 있습니다.
+- **샌드박스**: 키체인·쿠키 파일·네트워크는 샌드박스가 꺼진 **메뉴바 앱**만 접근할 수 있습니다. 위젯(샌드박스 ON)은 이 조회를 직접 하지 못하고, 메뉴바 앱이 스냅샷에 넣어 준 실측 %를 읽기만 합니다.
+- **Safe Storage 키는 한 번만 읽습니다**: 이 키는 바뀌지 않으므로 **앱 실행당 처음 한 번** 키체인에서 읽어 메모리에 캐시하고, 이후 조회는 캐시된 키로 쿠키만 다시 풉니다(쿠키는 회전할 수 있어 파일은 매번 읽음). 키가 무효화되면(키 교체 등) 자동으로 한 번 더 읽습니다.
+- **조회 주기 설정**: 설정 → 실측 사용량 (claude.ai) → **갱신 주기** 에서 30초·1분(기본)·3분·5분·10분·30분·**수동** 중 고릅니다. '수동'은 앱 시작 때 1회만 가져오고 이후엔 패널의 새로고침 버튼으로만 갱신합니다.
+- **비밀은 저장하지 않습니다**: 키·세션 쿠키는 메모리에서만 다루고 디스크에 쓰지 않습니다. 스냅샷에는 복호화 결과가 아니라 서버가 준 **백분율·리셋 시각**만 담깁니다.
+- 조회를 원치 않으면 **설정 → 실측 사용량 (claude.ai)** 토글로 끌 수 있습니다. 끄면 아래의 로컬 추정만 씁니다.
+
+관련 코드: [ClaudeServerUsage.swift](ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeServerUsage.swift)
+
+---
+
+## 📊 로컬 데이터 소스 (폴백·토큰 상세)
+
+실측을 못 가져올 때의 대체 표시이자, 서버가 주지 않는 토큰·비용·모델별 상세의 출처입니다. Claude Code가 남기는 세션 로그를 직접 읽습니다.
+
+```
+~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
+```
+
+`type: "assistant"` 인 줄의 `message.usage` 에서 토큰을 집계합니다.
+
+- **중복 제거**: 같은 요청이 여러 줄에 기록되므로 `requestId`(없으면 `message.id`) 기준으로 한 번만 셉니다.
+- **5시간 창**: 창을 여는 **첫 요청 시각을 그대로** 시작점으로 씁니다. 창 길이를 넘기거나 5시간 이상 활동이 끊기면 새 창으로 봅니다.
+
+  > 초기 구현은 시작 시각을 정시로 내렸는데, 이러면 창이 최대 59분 짧아져 조기 만료되고 그 뒤 요청이 새 창을 열면서 집계가 초기화됩니다. 실측에서 307건이어야 할 창이 3건으로 잘려 리셋 시각이 4시간 넘게 어긋났습니다.
+- **증분 파싱**: 파일별로 읽은 바이트 위치를 기억해 새로 붙은 부분만 파싱합니다. 마지막 개행 이후는 쓰는 중일 수 있어 다음 회차로 넘깁니다.
+
+---
+
+## 📐 측정 방식 (measurement metric)
+
+Claude는 한도 산정식을 공개하지 않습니다. 그래서 소진율을 무엇으로 재는지 고를 수 있게 했습니다 (설정 → 측정 방식).
+
+| 방식 | 계산 | 특징 |
+|------|------|------|
+| **비용 환산 (기본값)** | 모델별 단가 × 토큰 | 캐시 읽기의 낮은 단가(입력의 1/10)를 반영. 실제 리소스 소비에 가장 가깝습니다. |
+| 토큰 (캐시 읽기 제외) | `input + output + cache_creation` | 캐시 읽기를 세지 않아 실제보다 **낮게** 나옵니다. |
+| 토큰 (전체) | 위 + `cache_read` | 캐시 읽기를 원가 그대로 세므로 실제보다 **높게** 나옵니다. |
+
+캐시 읽기를 제외하면 왜 낮게 나오는지는 실측 비용 구성을 보면 분명합니다 (Opus 5, 5시간 창 하나):
+
+| 항목 | 금액 | 비중 |
+|------|------|------|
+| 캐시 읽기 | $13.48 | **55.3%** |
+| 캐시 쓰기 (1h TTL) | $6.79 | 27.9% |
+| 출력 | $4.10 | 16.8% |
+| 입력 | $0.00 | 0.0% |
+
+Claude Code는 대화 컨텍스트를 매 요청 캐시에서 다시 읽기 때문에, **캐시 읽기 토큰이 billable 토큰의 수십 배**가 됩니다. 이걸 빼고 세면 소진율이 구조적으로 과소평가됩니다.
+
+단가는 [ModelPricing.swift](ClaudeUsageWidgetApp/Shared/ModelPricing.swift)에 있습니다 (Opus 5/4.8: 입력 $5, 출력 $25 / MTok. 캐시 쓰기는 1h TTL 2×, 5m TTL 1.25×, 캐시 읽기 0.1×). 로그에 `cache_creation.ephemeral_1h_input_tokens` / `ephemeral_5m_input_tokens` 가 남아 TTL별로 정확히 계산합니다.
+
+---
+
+## ⏱ 리셋 시점 — 창 경계를 맞추는 것이 한도 값보다 중요합니다
+
+측정 방식이 맞아도 **창 경계가 틀리면 값이 통째로 어긋납니다.** 실측에서 겪은 두 가지:
+
+**1. 주간 한도는 롤링이 아니라 고정 주기입니다.** Claude는 정해진 요일·시각(예: 화요일 15:00)에 주간 한도를 리셋합니다. 이걸 "최근 7일 롤링"으로 집계하면 지난 주기 사용량까지 섞여 들어갑니다 — 실측에서 $124가 $190으로, **1.6배 과다 계상**됐습니다. 설정 → 리셋 시점에서 요일과 시각을 지정하세요. 모르면 "모름(롤링)"으로 두면 됩니다.
+
+**2. 5시간 창은 로그만으로 정확히 알 수 없습니다.** 창 시작은 리셋 후 첫 요청 시각이지만, 그 요청이 Claude 데스크톱 앱이나 웹에서 발생했다면 로컬 로그에 없습니다. 실측에서 실제 창 시작은 12:40인데 로그의 첫 요청은 13:00:44로 **20분 늦게** 잡혔습니다.
+
+설정에 리셋 시각을 넣으면 이 창 하나를 정확히 고정합니다:
+
+| 입력한 리셋 시각 | 해석 |
+|---|---|
+| 아직 오지 않음 | 그 5시간 전이 현재 창의 시작 |
+| 방금 지남 (5시간 이내) | **그 시각이 새 창의 시작** |
+| 5시간 넘게 지남 | 정보가 낡음 → 로그 기반 추정으로 자동 복귀 |
+
+지금 기준 ±5시간을 벗어난 값은 거부합니다. 5시간 창의 리셋은 그 범위 안에만 있을 수 있고, 범위를 넘긴 값은 창 경계를 잘못 잡아 사용량이 통째로 빠지거나 남습니다.
+
+---
+
+## 🎯 캘리브레이션 — Claude가 보여주는 값에 맞추기
+
+> 실측 사용량(claude.ai)을 켜 두면 5시간·주간 소진율은 서버 값 그대로라 캘리브레이션이 필요 없습니다. 아래는 **실측을 껐거나 못 가져올 때의 로컬 추정**에만 해당합니다.
+
+한도 값 자체는 여전히 추정입니다. Claude Code에서 `/usage` 로 실제 % 를 확인해 한 번 맞추면 이후로는 정확히 따라갑니다.
+
+1. Claude Code에서 `/usage` 를 실행해 5시간 한도 % 를 확인합니다.
+2. 메뉴바 → **한도 설정** → **캘리브레이션** 에 그 숫자를 넣고 **«이 값에 맞추기»** 를 누릅니다.
+3. 현재 측정값 ÷ 입력한 비율 로 한도를 역산해 저장합니다. 주간 한도는 5시간 한도와의 비율을 유지한 채 함께 조정됩니다.
+
+측정 방식을 바꾸면 한도 단위도 달라지므로 그 방식의 기본값으로 초기화됩니다 — **방식을 먼저 고르고 나서 캘리브레이션**하세요.
+
+### ⚠️ 남는 한계 (로컬 추정 한정)
+
+**로컬 추정에는 Claude 데스크톱 앱 / claude.ai 사용량이 포함되지 않습니다.** 그쪽 소비량은 서버에만 있고 로컬 로그가 없습니다. 캘리브레이션 후에도 Claude가 계속 더 높은 값을 보여준다면, 그 차이가 데스크톱/웹에서 쓴 몫입니다.
+
+> 이 한계는 **실측 사용량(claude.ai)** 을 켜면 사라집니다. 서버 값은 계정 전체(코드·데스크톱·웹)를 포함하기 때문입니다. 로컬 로그를 파싱한 이유도 원래는 서버 한도 정보가 로컬에 없어서였습니다 — `~/.claude/policy-limits.json` 에는 한도가 없고, 세션 로그의 `error.rateLimits` 는 모두 `null` 입니다. Safe Storage 방식은 그 서버 값을 직접 가져와 이 공백을 메웁니다.
+
+---
+
+## 🗂 파일 구조
+
+```
+├── install.sh                       # 사전 점검 → Release 빌드 → /Applications 설치 → 실행
+├── uninstall.sh                     # 제거 (--purge 로 설정까지)
+├── package.sh                       # DMG + Homebrew Cask 생성 (서명·공증은 자격 있으면 자동)
+ClaudeUsageWidgetApp/
+├── Shared/                          # 두 타겟이 함께 컴파일하는 코어
+│   ├── UsageModels.swift            # TokenCounts, SessionBlock, UsageSnapshot, 한도 상수
+│   ├── ClaudeUsageReader.swift      # JSONL 증분 파싱 및 창·일·주 집계
+│   ├── UsageSharedStore.swift       # 스냅샷·설정 파일 읽기/쓰기
+│   └── UsageBarView.swift           # 진행 바 + 경고 단계 색
+├── ClaudeUsageWidgetApp/            # 메뉴바 앱 타겟 (샌드박스 OFF)
+│   ├── ClaudeUsageWidgetAppApp.swift  # MenuBarExtra + Settings 씬
+│   ├── UsageMonitor.swift             # 5초 로컬 + 60초 서버 조회, 스냅샷 발행
+│   ├── ClaudeServerUsage.swift        # Safe Storage 복호화 + claude.ai 실측 조회
+│   ├── UsagePanel.swift               # 메뉴바 팝오버 UI
+│   └── UsageSettingsView.swift        # 실측 토글 + 추정 한도 설정
+└── ClaudeUsageWidget/               # 위젯 익스텐션 타겟 (샌드박스 ON)
+    ├── ClaudeUsageWidgetBundle.swift
+    ├── ClaudeUsageWidget.swift
+    └── ClaudeUsageWidget.entitlements
+```
+
+---
+
+## 🔐 샌드박스와 프로세스 간 공유
+
+위젯 익스텐션은 App Sandbox가 강제되므로 `~/.claude` 를 그냥 읽을 수 없습니다. 이 프로젝트는 다음과 같이 풉니다.
+
+| 타겟 | 샌드박스 | 접근 방식 |
+|------|----------|-----------|
+| 메뉴바 앱 | OFF (`ENABLE_APP_SANDBOX = NO`) | `~/.claude` 직접 읽기, 스냅샷 쓰기, **키체인(Safe Storage) · `~/Library/Application Support/Claude/Cookies` · claude.ai 네트워크** |
+| 위젯 익스텐션 | ON | entitlement의 읽기 전용 예외로 `~/.claude` 접근 (실측 조회는 불가 → 스냅샷의 서버 값만 읽음) |
+
+위젯 entitlement:
+
+```xml
+<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+<array><string>/.claude/</string></array>
+```
+
+샌드박스 안에서는 `NSHomeDirectory()` 가 컨테이너(`~/Library/Containers/<bundle-id>/Data`)를 가리키므로, `ClaudeUsageReader.defaultClaudeHome` 이 경로에서 실제 홈을 복원합니다.
+
+**App Group을 쓰지 않은 이유**: macOS의 App Group ID는 `<TeamID>.group.*` 형식이어야 하고 팀 서명이 필요합니다. 이 프로젝트는 `DEVELOPMENT_TEAM` 이 비어 있는 ad-hoc 로컬 서명이라 App Group 컨테이너를 쓸 수 없습니다. 대신 파일 두 개로 주고받습니다.
+
+| 파일 | 쓰는 쪽 | 읽는 쪽 |
+|------|---------|---------|
+| `~/.claude/.usage-widget-snapshot.json` | 메뉴바 앱 (5초) | 위젯 |
+| `~/.claude/.usage-widget-config.json` | 메뉴바 앱 (설정 변경 시) | 위젯 |
+
+위젯은 스냅샷이 90초 이내로 신선하면 그대로 쓰고(가볍습니다), 오래됐거나 없으면 — 즉 메뉴바 앱이 꺼져 있으면 — 스스로 로그를 파싱합니다. 이때 위젯 하단에 `bolt.slash` 아이콘이 표시됩니다.
+
+> Team ID를 넣어 정식 서명으로 전환한다면, App Group 방식으로 바꾸고 위젯 entitlement의 임시 예외를 제거하는 편이 낫습니다. 임시 예외는 App Store 심사에서 거부될 수 있습니다.
+
+---
+
+## 🛠 기술 스택
+
+| 구분 | 내용 |
+|------|------|
+| 언어 | Swift 5 (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`) |
+| UI | SwiftUI (`MenuBarExtra`, `@Observable`) |
+| 위젯 | WidgetKit (`StaticConfiguration`, `TimelineProvider`) |
+| 대상 OS | macOS 26.5 이상 |
+| IDE | Xcode 26 (`objectVersion = 77`, 동기화된 폴더) |
+
+---
+
+## 🚀 설치
+
+이 앱은 App Store에 없습니다. **소스를 받아 직접 빌드해 설치**합니다. 자기 머신에서 빌드하므로 Gatekeeper 경고나 별도 서명 절차가 없습니다.
+
+### 요구 사항
+
+| 항목 | 버전 | 비고 |
+|------|------|------|
+| macOS | **15.0 이상** | `MACOSX_DEPLOYMENT_TARGET` 기준. 낮으면 스크립트가 먼저 알려 줍니다 |
+| Xcode | 16 이상 | **Command Line Tools 만으로는 안 됩니다** — WidgetKit 익스텐션 타겟이 있어 Xcode 본체가 필요합니다. (개발·검증은 26.6에서 했습니다) |
+| Claude 데스크톱 앱 | (선택) | 실측 사용량을 쓰려면 설치·로그인돼 있어야 합니다 |
+
+### 설치
+
+```bash
+git clone <이-저장소-URL> claude-usage-widget
+cd claude-usage-widget
+./install.sh
+```
+
+스크립트가 하는 일:
+
+1. **사전 점검** — Xcode 존재·`xcode-select` 경로·macOS 버전을 먼저 확인하고, 문제가 있으면 해결 명령까지 알려 줍니다
+2. Release 구성으로 빌드 (산출물 `ClaudeUsageWidgetApp/.build/`, 전체 로그 `.build/build.log`). 실패하면 로그 끝부분을 그대로 보여 줍니다
+3. 실행 중인 이전 버전 종료 — 낡은 번들을 위젯이 붙잡고 있는 것을 막습니다
+4. `/Applications/ClaudeUsageWidgetApp.app` 로 교체 설치
+5. `lsregister` 로 위젯 익스텐션 재등록 후 알림센터 위젯 호스트(`ChronoAgent`) 재시작
+6. 앱 실행
+
+코드를 수정하거나 `git pull` 한 뒤에는 `./install.sh` 를 다시 실행하면 됩니다.
+
+> **첫 실행 시 키체인 접근 허용 창**이 뜹니다 — 실측 사용량을 위해 Claude 데스크톱 앱이 만든 Safe Storage 키를 읽기 때문입니다. **«항상 허용»** 을 누르세요. 이 프로젝트는 ad-hoc 서명이라 재빌드하면 서명 해시가 바뀌어 다시 물어볼 수 있습니다 (자세한 배경은 위 [실측 사용량](#-실측-사용량--claude-safe-storage로-계정-전체-사용량-불러오기) 절).
+
+### 로그인 시 자동 실행
+
+메뉴바 → **한도 설정** → **실행** 섹션의 토글을 켭니다 (`SMAppService` 사용). `/Applications` 밖에서 실행 중이면 경로가 바뀔 때 등록이 깨지므로 경고가 표시됩니다 — 설치 후 켜세요.
+
+### 위젯 추가
+
+1. 데스크톱을 우클릭 → **위젯 편집**.
+2. **Claude Code 사용량** 을 찾아 원하는 크기로 드래그합니다.
+
+---
+
+## 📦 배포 패키징 (DMG · Homebrew)
+
+`.app` 을 DMG 로 묶고 Homebrew Cask 파일을 만듭니다.
+
+```bash
+./package.sh
+```
+
+산출물은 `dist/` 에 생깁니다 — `ClaudeUsageWidget-<버전>.dmg` 와 `claude-usage-widget.rb`(SHA256·버전·최소 OS 가 채워진 Cask). 스크립트는 **있는 자격만 자동으로 씁니다.**
+
+| 보유 자격 | 하는 일 | 받는 사람 경험 |
+|---|---|---|
+| 없음 (현재) | ad-hoc 서명 그대로 DMG | Gatekeeper 우회 필요 — Cask `caveats` 에 안내가 자동 포함됨 |
+| Developer ID 인증서 | 서명 + Hardened Runtime | 여전히 공증 경고 |
+| + 공증 프로필 | 공증(notarize) + 스테이플 | **경고 없이 바로 실행** |
+
+```bash
+# 유료 가입 후 — 인증서는 자동 감지되고, 공증만 프로필을 지정합니다
+xcrun notarytool store-credentials notary --apple-id <id> --team-id <team>
+NOTARY_PROFILE=notary ./package.sh
+```
+
+### 공증하지 않은 빌드의 한계
+
+Apple Developer Program(유료, $99/년) 없이는 **공증할 수 없습니다.** 이때 받는 사람은 quarantine 속성을 지워야 합니다:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/ClaudeUsageWidgetApp.app
+```
+
+> `spctl -a` 는 이 앱을 항상 `rejected` 로 판정합니다(ad-hoc 서명이므로). 하지만 그건 **정책 평가 결과**이고 실행 차단과 다릅니다 — Gatekeeper 가 실제로 막는 것은 **quarantine 속성이 붙어 있을 때**뿐이라, 위 명령이면 정상 실행됩니다. 직접 빌드해 설치하는 경우(`./install.sh`)는 애초에 quarantine 이 붙지 않아 아무 조치가 필요 없습니다.
+
+또한 ad-hoc 서명은 재빌드마다 서명 해시가 바뀌어, **업데이트할 때마다 키체인 접근 허용 창이 다시 뜹니다.** Developer ID 로 서명하면 팀 ID 기준으로 서명이 안정되어 «항상 허용» 이 업데이트 후에도 유지됩니다.
+
+### Homebrew 로 배포하기
+
+GUI 앱이므로 **Cask** 를 씁니다. 공식 `homebrew-cask` 는 notability 요건과 심사가 있어 개인 프로젝트는 **자체 tap** 이 현실적입니다.
+
+```bash
+# 1. 릴리스에 DMG 올리기
+gh release create v1.0 dist/ClaudeUsageWidget-1.0.dmg --title v1.0
+
+# 2. homebrew-tap 저장소(이름이 homebrew- 로 시작해야 합니다)의 Casks/ 에 복사
+cp dist/claude-usage-widget.rb ../homebrew-tap/Casks/
+
+# 3. 받는 사람
+brew tap <사용자>/tap
+brew install --cask claude-usage-widget       # 공증 안 된 빌드면 --no-quarantine 추가
+```
+
+> 원격(`origin`)이 설정돼 있으면 Cask 의 `url` 이 자동으로 채워집니다. 없으면 `YOUR_GITHUB_USER` 자리표시자가 들어가니 치환하세요.
+
+---
+
+### 제거
+
+```bash
+./uninstall.sh
+```
+
+앱을 종료하고 `/Applications` 에서 지운 뒤 위젯 호스트를 재시작합니다. 설정과 스냅샷(`~/.claude/.usage-widget-*.json`)까지 함께 지우려면:
+
+```bash
+./uninstall.sh --purge
+```
+
+자동 실행을 켜 두었다면 먼저 토글을 끄거나, 시스템 설정 → 일반 → 로그인 항목에서 제거합니다.
+
+---
+
+## 🧑‍💻 개발 중 빌드
+
+```bash
+xcodebuild -project ClaudeUsageWidgetApp/ClaudeUsageWidgetApp.xcodeproj -scheme ClaudeUsageWidgetApp -destination 'platform=macOS' build
+```
+
+Xcode에서는 스킴을 `ClaudeUsageWidgetApp` 으로 두고 `Cmd + R`.
+
+앱은 `LSUIElement = YES` 라서 **Dock에 뜨지 않고 메뉴바에만** 나타납니다. 종료는 메뉴바 패널의 "종료".
+
+> 개발 빌드와 설치 버전은 번들 ID가 같아서 위젯 등록이 서로를 덮어씁니다. 위젯이 엉뚱한 버전을 보는 것 같으면 `./install.sh` 를 다시 실행하세요.
+
+---
+
+## 🧩 Shared 폴더를 두 타겟이 쓰는 방법
+
+Xcode 26의 동기화된 폴더(`PBXFileSystemSynchronizedRootGroup`)는 폴더 하나를 한 타겟에만 붙일 수 있습니다. 그래서 `Shared` 를 가리키는 그룹을 **두 개** 만들어 각 타겟에 하나씩 붙였습니다 (`project.pbxproj` 의 `AAAA000000000000000000A1` / `A2`).
+
+`Shared/` 에 파일을 새로 넣으면 두 타겟에 자동으로 들어갑니다 — pbxproj를 손댈 필요가 없습니다.
+
+---
+
+## 📄 라이선스
+
+교육 및 연구 목적으로 제공되며, 필요에 따라 수정 및 재배포가 가능합니다.

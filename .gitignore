@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Xcode — 사용자별 상태(창 위치, 스킴 순서)는 공유하지 않는다
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# 빌드 산출물
+DerivedData/
+build/
+ClaudeUsageWidgetApp/.build/
+
+# 로컬 도구 설정
+.agentkit/
+
+# 배포 산출물
+dist/
+ClaudeUsageWidgetApp/.build-dist/

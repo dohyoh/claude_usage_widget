@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 위젯 익스텐션은 샌드박스가 강제된다. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!--
+	  메뉴바 앱이 내려주는 스냅샷(~/.claude/.usage-widget-snapshot.json)과,
+	  앱이 꺼져 있을 때 직접 읽는 세션 로그(~/.claude/projects/)에 필요한 예외.
+	  App Group을 쓰려면 Team ID가 필요하므로 개인용 로컬 빌드에서는 이 예외로 대신한다.
+	-->
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+	<array>
+		<string>/.claude/</string>
+	</array>
+</dict>
+</plist>
