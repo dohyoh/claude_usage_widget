@@ -115,14 +115,19 @@ struct UsagePanel: View {
     private func serverSection(_ server: ServerUsage) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if let five = server.fiveHour {
-                serverBar(title: "5시간 창", window: five)
+                serverBar(title: "5시간 창", window: five,
+                          length: ClaudeUsageLimits.sessionWindow)
             }
             if let week = server.sevenDay {
-                serverBar(title: "주간", window: week)
+                serverBar(title: "주간", window: week,
+                          length: ClaudeUsageLimits.weeklyWindow)
             }
             if let opus = server.sevenDayOpus {
-                serverBar(title: "주간 · Opus", window: opus)
+                serverBar(title: "주간 · Opus", window: opus,
+                          length: ClaudeUsageLimits.weeklyWindow)
             }
+            // 바 아래 얇은 청록 바가 무엇인지 한 번 알려준다.
+            UsageElapsedLegend()
             HStack(spacing: 4) {
                 Image(systemName: "checkmark.seal.fill")
                     .foregroundStyle(.tint)
@@ -142,16 +147,24 @@ struct UsagePanel: View {
     }
 
     /// 서버 실측 창 하나를 진행 바로 그린다. 리셋 시각이 있으면 남은 시간을 곁들인다.
-    private func serverBar(title: String, window: ServerUsageWindow) -> some View {
+    /// - Parameter length: 이 창의 전체 길이 — 경과 시간 바의 분모다.
+    private func serverBar(title: String, window: ServerUsageWindow, length: TimeInterval) -> some View {
         let pct = Int(window.utilizationPercent.rounded())
         let detail: String
-        if let reset = window.resetsAt {
-            let remaining = max(0, reset.timeIntervalSince(now))
-            detail = "리셋까지 \(remaining.compactDurationString) (\(reset.formatted(.dateTime.hour().minute())))"
+        if let reset = window.resetsAt, let remaining = window.remainingTime(at: now) {
+            // 주간은 며칠 뒤라 시각만으로는 언제인지 알 수 없다 — 요일을 함께 적는다.
+            let stamp = length > 24 * 60 * 60
+                ? reset.formatted(.dateTime.weekday().hour().minute())
+                : reset.formatted(.dateTime.hour().minute())
+            detail = "리셋까지 \(remaining.compactRemainingString) (\(stamp))"
         } else {
             detail = "계정 전체 실측 소진율"
         }
-        return UsageBar(title: title, ratio: window.ratio, detail: detail, trailing: "\(pct)%")
+        return UsageBar(title: title,
+                        ratio: window.ratio,
+                        detail: detail,
+                        trailing: "\(pct)%",
+                        elapsedRatio: window.elapsedRatio(at: now, window: length))
     }
 
     /// 서버가 주지 않는 토큰·비용·모델별 상세(로컬 로그 기반).
@@ -193,10 +206,13 @@ struct UsagePanel: View {
             UsageBar(title: "5시간 창 (추정)",
                      ratio: ratio,
                      detail: "\(used) / \(limit) · 요청 \(block.requestCount)회",
-                     trailing: "\(Int((ratio * 100).rounded()))%")
+                     trailing: "\(Int((ratio * 100).rounded()))%",
+                     elapsedRatio: block.elapsedRatio(at: now))
 
+            // 시계 아이콘을 시간 바와 같은 색으로 둔다 — 이 줄이 그 바의 설명이다.
             HStack(spacing: 4) {
                 Image(systemName: "clock")
+                    .foregroundStyle(Color.usageTimeTint)
                 Text("리셋까지 \(remaining.compactDurationString)")
                 Text("(\(block.endsAt, format: .dateTime.hour().minute()))")
                     .foregroundStyle(.tertiary)
@@ -211,10 +227,26 @@ struct UsagePanel: View {
         let used = config.metric.format(snapshot.weeklyTokens.value(for: config.metric))
         let limit = config.metric.format(config.weeklyLimit)
         return VStack(alignment: .leading, spacing: 10) {
-            UsageBar(title: "\(config.weeklyTitle) (추정)",
-                     ratio: weeklyRatio,
-                     detail: "\(used) / \(limit)",
-                     trailing: "\(Int((weeklyRatio * 100).rounded()))%")
+            VStack(alignment: .leading, spacing: 6) {
+                UsageBar(title: "\(config.weeklyTitle) (추정)",
+                         ratio: weeklyRatio,
+                         detail: "\(used) / \(limit)",
+                         trailing: "\(Int((weeklyRatio * 100).rounded()))%",
+                         elapsedRatio: config.weeklyElapsedRatio(now: now))
+
+                // 주간 리셋 요일을 지정했을 때만 리셋 시점이 존재한다.
+                if let reset = config.nextWeeklyReset(now: now) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .foregroundStyle(Color.usageTimeTint)
+                        Text("리셋까지 \(max(0, reset.timeIntervalSince(now)).compactRemainingString)")
+                        Text("(\(reset, format: .dateTime.weekday().hour().minute()))")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+            }
 
             HStack {
                 Label("오늘 \(config.metric.format(snapshot.todayTokens.value(for: config.metric)))",

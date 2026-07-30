@@ -83,6 +83,9 @@ echo "==> 위젯 익스텐션 재등록"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
     -f "$DEST" 2>/dev/null || true
 killall -q ChronoAgent 2>/dev/null || true   # 알림센터 위젯 호스트
+# chronod 는 위젯 목록과 아이콘·표시 이름을 캐시한다. 이걸 재시작하지 않으면
+# «위젯 편집» 목록이 예전 메타데이터(빈 아이콘 등)를 계속 보여준다. launchd 가 바로 되살린다.
+killall -q chronod 2>/dev/null || true
 killall -q WidgetKit\ Simulator 2>/dev/null || true
 
 echo "==> 실행"

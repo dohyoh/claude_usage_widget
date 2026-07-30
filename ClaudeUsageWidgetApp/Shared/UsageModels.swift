@@ -120,6 +120,11 @@ struct SessionBlock: Codable, Hashable, Sendable {
     var endsAt: Date { startedAt.addingTimeInterval(ClaudeUsageLimits.sessionWindow) }
     func isActive(at now: Date) -> Bool { now < endsAt }
     func remainingTime(at now: Date) -> TimeInterval { max(0, endsAt.timeIntervalSince(now)) }
+
+    /// 5시간 창에서 지금까지 지나간 비율(0...1) — 경과 시간 바에 쓴다.
+    func elapsedRatio(at now: Date) -> Double {
+        min(1, max(0, now.timeIntervalSince(startedAt) / ClaudeUsageLimits.sessionWindow))
+    }
 }
 
 /// 서버(claude.ai)가 알려주는 한도 창 하나의 실측 소진율.
@@ -139,6 +144,21 @@ struct ServerUsageWindow: Codable, Hashable, Sendable {
     func isCurrent(at now: Date) -> Bool {
         guard let resetsAt else { return true }
         return now < resetsAt
+    }
+
+    /// 리셋까지 남은 시간. 서버가 리셋 시각을 주지 않았으면 nil.
+    func remainingTime(at now: Date) -> TimeInterval? {
+        guard let resetsAt else { return nil }
+        return max(0, resetsAt.timeIntervalSince(now))
+    }
+
+    /// 창 전체 길이에서 지금까지 지나간 비율(0...1) — 경과 시간 바에 쓴다.
+    ///
+    /// 서버는 창의 시작 시각을 주지 않으므로 리셋 시각에서 역산한다.
+    /// - Parameter window: 이 창의 전체 길이. 5시간 창이면 5시간, 주간이면 7일.
+    func elapsedRatio(at now: Date, window: TimeInterval) -> Double? {
+        guard let remaining = remainingTime(at: now), window > 0 else { return nil }
+        return min(1, max(0, 1 - remaining / window))
     }
 }
 

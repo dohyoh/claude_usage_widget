@@ -40,7 +40,21 @@ struct UsageConfig: Codable, Hashable, Sendable {
     /// 이전 버전 호환을 위해 Optional. 실제 값은 `serverRefreshInterval`을 쓴다.
     var serverRefreshSeconds: Int?
 
+    /// 메뉴바 라벨에 주간 소진율을 함께 표시할지. nil = 꺼짐.
+    ///
+    /// 메뉴바는 폭이 곧 다른 앱의 자리라 기본은 5시간 창 하나만 둔다. 이전 버전 설정
+    /// 파일에 키가 없어도 디코딩이 깨지지 않게 Optional로 두고, 판단은 `showsMenuBarWeekly`.
+    var menuBarShowsWeekly: Bool?
+    /// 메뉴바 라벨에 5시간 창 리셋까지 남은 시간을 함께 표시할지. nil = 꺼짐.
+    var menuBarShowsRemaining: Bool?
+
     static let `default` = UsageConfig()
+
+    /// 메뉴바에 주간 소진율을 붙일지. 설정이 없으면 꺼짐.
+    var showsMenuBarWeekly: Bool { menuBarShowsWeekly ?? false }
+
+    /// 메뉴바에 리셋까지 남은 시간을 붙일지. 설정이 없으면 꺼짐.
+    var showsMenuBarRemaining: Bool { menuBarShowsRemaining ?? false }
 
     /// 서버 실측 사용량을 표시할지. 설정이 없으면 기본 켜짐.
     var showsServerUsage: Bool { serverUsageEnabled ?? true }
@@ -79,6 +93,13 @@ struct UsageConfig: Codable, Hashable, Sendable {
         guard weeklyResetWeekday != nil else { return nil }
         return weeklyWindowStart(now: now, calendar: calendar)
             .addingTimeInterval(ClaudeUsageLimits.weeklyWindow)
+    }
+
+    /// 주간 주기에서 지금까지 지나간 비율(0...1). 고정 주기를 모르면 nil — 롤링에는 리셋이 없다.
+    func weeklyElapsedRatio(now: Date, calendar: Calendar = .current) -> Double? {
+        guard weeklyResetWeekday != nil else { return nil }
+        let start = weeklyWindowStart(now: now, calendar: calendar)
+        return min(1, max(0, now.timeIntervalSince(start) / ClaudeUsageLimits.weeklyWindow))
     }
 
     /// 주간 막대에 붙일 짧은 제목. 고정 주기와 롤링을 구분한다.

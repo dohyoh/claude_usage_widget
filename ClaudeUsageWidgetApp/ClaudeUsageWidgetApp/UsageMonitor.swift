@@ -130,8 +130,19 @@ final class UsageMonitor {
         reloadWidget(force: false)
     }
 
-    /// 메뉴바 라벨에 쓰는 짧은 텍스트. 서버 실측이 있으면 그 5시간 %를 쓴다.
+    /// 메뉴바 라벨에 쓰는 짧은 텍스트.
+    ///
+    /// 5시간 창 소진율은 항상 쓰고, 주간 소진율과 리셋까지 남은 시간은 설정에서 켠 것만
+    /// « · » 로 이어 붙인다. 메뉴바 폭은 다른 앱과 나눠 쓰는 자리라 기본은 하나만 둔다.
     var menuBarLabel: String {
+        var parts = [sessionLabel]
+        if config.showsMenuBarWeekly, let weekly = weeklyLabel { parts.append(weekly) }
+        if config.showsMenuBarRemaining, let remaining = remainingLabel { parts.append(remaining) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// 5시간 창 소진율. 서버 실측이 있으면 그 값을 쓴다.
+    private var sessionLabel: String {
         if let window = snapshot.usableServerUsage(config: config)?.fiveHour {
             return "\(Int(window.utilizationPercent.rounded()))%"
         }
@@ -141,6 +152,25 @@ final class UsageMonitor {
             return "\(Int((ratio * 100).rounded()))%"
         }
         return config.metric.format(snapshot.sessionValue(for: config.metric))
+    }
+
+    /// 주간 소진율. 실측도 없고 로컬 집계도 비어 있으면 붙일 게 없다.
+    private var weeklyLabel: String? {
+        if let window = snapshot.usableServerUsage(config: config)?.sevenDay {
+            return "주 \(Int(window.utilizationPercent.rounded()))%"
+        }
+        guard snapshot.weeklyTokens.total > 0 else { return nil }
+        return "주 \(Int((snapshot.weeklyUtilization(config: config) * 100).rounded()))%"
+    }
+
+    /// 5시간 창 리셋까지 남은 시간. 서버가 준 `resets_at`을 먼저 쓰고, 없으면 창의 끝을 쓴다.
+    private var remainingLabel: String? {
+        let now = Date()
+        if let remaining = snapshot.usableServerUsage(config: config)?.fiveHour?.remainingTime(at: now) {
+            return remaining.compactDurationString
+        }
+        guard let block = snapshot.activeBlock, block.isActive(at: now) else { return nil }
+        return block.remainingTime(at: now).compactDurationString
     }
 
     /// 메뉴바에 표시할 데이터가 있는지 — 아이콘 선택에 쓴다.

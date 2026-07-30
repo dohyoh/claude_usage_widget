@@ -81,6 +81,32 @@ struct UsageSettingsView: View {
             }
 
             Section {
+                LabeledContent("미리보기") {
+                    HStack(spacing: 3) {
+                        Image(systemName: monitor.hasSessionData
+                              ? "gauge.with.dots.needle.50percent"
+                              : "gauge.with.dots.needle.0percent")
+                        Text(monitor.menuBarLabel)
+                            .monospacedDigit()
+                    }
+                }
+                Toggle("주간 소진율 함께 표시", isOn: Binding(
+                    get: { config.showsMenuBarWeekly },
+                    set: { monitor.config.menuBarShowsWeekly = $0 }
+                ))
+                Toggle("리셋까지 남은 시간 함께 표시", isOn: Binding(
+                    get: { config.showsMenuBarRemaining },
+                    set: { monitor.config.menuBarShowsRemaining = $0 }
+                ))
+            } header: {
+                Text("메뉴바 표시")
+            } footer: {
+                Text("메뉴바에는 5시간 창 소진율(%)이 항상 표시됩니다. 위 항목을 켜면 «62% · 주 39% · 2h 14m» 처럼 뒤에 이어 붙습니다. 메뉴바가 좁아지면 macOS가 뒤쪽부터 잘라내므로 필요한 것만 켜는 편이 좋습니다. 표시할 값이 아직 없으면(주간 집계가 비었거나 진행 중인 창이 없으면) 그 항목은 생략됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Toggle("claude.ai 실측 사용량 표시", isOn: Binding(
                     get: { config.showsServerUsage },
                     set: { monitor.config.serverUsageEnabled = $0 }

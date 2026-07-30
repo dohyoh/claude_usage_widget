@@ -108,15 +108,100 @@ if [ -n "$SIGN_ID" ]; then
 fi
 
 # ── DMG ──────────────────────────────────────────────────────────────────────
+#
+# 배경 이미지·볼륨 아이콘·아이콘 배치를 입히려면 rw 이미지로 만들어 마운트한 뒤
+# Finder 로 창을 꾸미고 압축(UDZO)으로 변환해야 한다. assets/ 가 없거나 Finder
+# 자동화가 막혀 있으면 꾸미기만 건너뛰고 평범한 DMG 를 그대로 만든다.
+#
 DMG="$DIST/ClaudeUsageWidget-$VERSION.dmg"
 echo "==> DMG 생성"
 DMG_SRC="$(mktemp -d)"
 cp -R "$STAGE_APP" "$DMG_SRC/"
 # 드래그 설치를 위한 /Applications 별칭.
 ln -s /Applications "$DMG_SRC/Applications"
+
+# 배경 이미지 — 다중 해상도 TIFF 한 장으로 Retina 까지 커버한다 (assets/make-images.swift).
+DMG_BG="$ROOT/assets/dmg-background.tiff"
+if [ -f "$DMG_BG" ]; then
+    mkdir -p "$DMG_SRC/.background"
+    cp "$DMG_BG" "$DMG_SRC/.background/background.tiff"
+fi
+
+# 볼륨 아이콘 — 앱 아이콘 PNG 들이 iconutil 규격 이름 그대로라 바로 묶을 수 있다.
+# 이미지에는 아직 넣지 않는다. Finder 가 창을 갱신할 때 볼륨 루트의
+# .VolumeIcon.icns 를 지우고 커스텀 아이콘 플래그까지 되돌리므로, 창을 꾸민
+# **뒤에** 복사해야 최종 DMG 까지 남는다.
+VOL_ICNS=""
+APPICONSET="$PROJECT_DIR/ClaudeUsageWidgetApp/Assets.xcassets/AppIcon.appiconset"
+if [ -d "$APPICONSET" ] && command -v iconutil >/dev/null 2>&1; then
+    ISET="$(mktemp -d)/VolumeIcon.iconset"
+    mkdir -p "$ISET"
+    cp "$APPICONSET"/icon_*.png "$ISET/" 2>/dev/null || true
+    # 볼륨 아이콘은 512 까지면 충분하다 — 1024 를 넣으면 icns 만 700KB 넘게 붙는다.
+    rm -f "$ISET/icon_512x512@2x.png"
+    if iconutil -c icns "$ISET" -o "$(dirname "$ISET")/VolumeIcon.icns" 2>/dev/null; then
+        VOL_ICNS="$(dirname "$ISET")/VolumeIcon.icns"
+    fi
+fi
+
 rm -f "$DMG"
-hdiutil create -volname "$VOLNAME" -srcfolder "$DMG_SRC" -ov -format UDZO "$DMG" >/dev/null
-rm -rf "$DMG_SRC"
+RW_DMG="$(mktemp -d)/rw.dmg"
+# .DS_Store 를 쓸 여유를 두고 크기를 잡는다.
+DMG_KB=$(( $(du -sk "$DMG_SRC" | cut -f1) + 20000 ))
+hdiutil create -volname "$VOLNAME" -srcfolder "$DMG_SRC" -ov \
+               -fs HFS+ -format UDRW -size "${DMG_KB}k" "$RW_DMG" >/dev/null
+
+# 같은 이름의 볼륨이 이미 붙어 있으면 macOS 가 "... 1" 로 이름을 바꿔 마운트하므로,
+# AppleScript 에는 실제 마운트 이름을 넘긴다. (grep 이 빈손이어도 스크립트를 죽이지 않게 || true)
+MOUNT="$(hdiutil attach -readwrite -noverify -noautoopen "$RW_DMG" \
+         | grep -o '/Volumes/.*' | head -1 || true)"
+if [ -n "$MOUNT" ]; then
+    VOL_ACTUAL="$(basename "$MOUNT")"
+    # 창 크기·아이콘 위치·배경은 배경 이미지(640×400)에 맞춘 좌표다.
+    if [ -f "$MOUNT/.background/background.tiff" ]; then
+        if osascript >/dev/null 2>&1 <<APPLESCRIPT
+tell application "Finder"
+    tell disk "$VOL_ACTUAL"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {200, 140, 840, 568}
+        set opts to the icon view options of container window
+        set arrangement of opts to not arranged
+        set icon size of opts to 112
+        set text size of opts to 12
+        set background picture of opts to file ".background:background.tiff"
+        set position of item "$APP_NAME" of container window to {160, 205}
+        set position of item "Applications" of container window to {480, 205}
+        close
+        open
+        update without registering applications
+        delay 1
+    end tell
+end tell
+APPLESCRIPT
+        then
+            echo "    창 배경·아이콘 배치 적용"
+        else
+            echo "    경고: Finder 자동화가 막혀 창 꾸미기를 건너뜁니다 (DMG 자체는 정상)"
+            echo "          시스템 설정 → 개인정보 보호 및 보안 → 자동화 에서 터미널의 Finder 제어를 허용하세요."
+        fi
+    fi
+
+    # 볼륨 아이콘 — Finder 스텝 이후에 넣는다(위 주석 참고). 플래그까지 세워야 보인다.
+    if [ -n "$VOL_ICNS" ] && command -v SetFile >/dev/null 2>&1; then
+        cp "$VOL_ICNS" "$MOUNT/.VolumeIcon.icns"
+        SetFile -a C "$MOUNT" 2>/dev/null || true
+    fi
+    sync
+    hdiutil detach "$MOUNT" >/dev/null || hdiutil detach "$MOUNT" -force >/dev/null
+else
+    echo "    경고: rw 이미지를 마운트하지 못해 창 꾸미기를 건너뜁니다 (DMG 자체는 정상)"
+fi
+
+hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
+rm -rf "$(dirname "$RW_DMG")" "$DMG_SRC" ${VOL_ICNS:+"$(dirname "$VOL_ICNS")"}
 echo "    $DMG ($(du -h "$DMG" | cut -f1))"
 
 # ── 공증 ─────────────────────────────────────────────────────────────────────
@@ -134,8 +219,12 @@ SHA="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
 # 저장소 slug 을 원격에서 뽑아 url 에 채운다. 원격이 없으면 자리표시자를 남긴다.
 SLUG=""
 if REMOTE="$(git -C "$ROOT" remote get-url origin 2>/dev/null)"; then
-    SLUG="$(printf '%s' "$REMOTE" | sed -E 's|.*github\.com[:/]+([^/]+/[^/]+?)(\.git)?/?$|\1|')"
-    [ "$SLUG" = "$REMOTE" ] && SLUG=""
+    # BSD sed 는 non-greedy(+?) 를 모른다 — 꼬리를 먼저 떼고 앞을 지우는 순서로 뽑는다.
+    case "$REMOTE" in
+        *github.com*)
+            SLUG="$(printf '%s' "$REMOTE" | sed -E -e 's|\.git/?$||' -e 's|/$||' -e 's|.*github\.com[:/]+||')"
+            ;;
+    esac
 fi
 if [ -z "$SLUG" ]; then
     SLUG="YOUR_GITHUB_USER/claude-usage-widget"
