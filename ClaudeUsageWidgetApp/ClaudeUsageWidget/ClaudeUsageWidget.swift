@@ -173,7 +173,7 @@ struct UsageWidgetContent: View {
                  detail: spec.detail,
                  trailing: spec.trailing,
                  elapsedRatio: spec.elapsedRatio,
-                 compact: isCompact)
+                 size: isCompact ? .compact : .regular)
     }
 
     /// 지금 그릴 바 목록. 서버 실측이 있으면 그쪽을 쓴다.
