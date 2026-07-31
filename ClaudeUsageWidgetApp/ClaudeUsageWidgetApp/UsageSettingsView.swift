@@ -81,15 +81,7 @@ struct UsageSettingsView: View {
             }
 
             Section {
-                LabeledContent("미리보기") {
-                    HStack(spacing: 3) {
-                        Image(systemName: monitor.hasSessionData
-                              ? "gauge.with.dots.needle.50percent"
-                              : "gauge.with.dots.needle.0percent")
-                        Text(monitor.menuBarLabel)
-                            .monospacedDigit()
-                    }
-                }
+                MenuBarStylePicker(monitor: monitor)
                 Toggle("주간 소진율 함께 표시", isOn: Binding(
                     get: { config.showsMenuBarWeekly },
                     set: { monitor.config.menuBarShowsWeekly = $0 }
@@ -98,10 +90,11 @@ struct UsageSettingsView: View {
                     get: { config.showsMenuBarRemaining },
                     set: { monitor.config.menuBarShowsRemaining = $0 }
                 ))
+                menuBarTextColor
             } header: {
                 Text("메뉴바 표시")
             } footer: {
-                Text("메뉴바에는 5시간 창 소진율(%)이 항상 표시됩니다. 위 항목을 켜면 «62% · 주 39% · 2h 14m» 처럼 뒤에 이어 붙습니다. 메뉴바가 좁아지면 macOS가 뒤쪽부터 잘라내므로 필요한 것만 켜는 편이 좋습니다. 표시할 값이 아직 없으면(주간 집계가 비었거나 진행 중인 창이 없으면) 그 항목은 생략됩니다.")
+                Text("아이콘은 5시간 창 소진율에 따라 채워집니다. 소진율(%)은 아이콘 왼쪽에, 위에서 켠 주간 소진율·남은 시간은 오른쪽에 붙습니다. 둘 다 켜면 오른쪽에 글자를 줄여 위아래로 쌓습니다. 메뉴바가 좁아지면 macOS가 뒤쪽부터 잘라내므로 필요한 것만 켜는 편이 좋습니다. 표시할 값이 아직 없으면(주간 집계가 비었거나 진행 중인 창이 없으면) 그 항목은 생략됩니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -297,6 +290,50 @@ struct UsageSettingsView: View {
         .frame(width: 460)
     }
 
+    /// 메뉴바 글자 색. 자주 쓰는 색과 색상 선택기를 한 줄에 둔다.
+    ///
+    /// 라벨을 직접 그리기 때문에 색을 고를 수 있다. 링·막대의 사용량 색은 경고 단계를
+    /// 나타내는 값이라 이 설정을 따르지 않는다.
+    private var menuBarTextColor: some View {
+        let current = config.menuBarTextColor
+        return LabeledContent("글자 색") {
+            HStack(spacing: 6) {
+                ForEach(Self.textColorPresets, id: \.hex) { preset in
+                    let isSelected = current.menuBarHexString
+                        .caseInsensitiveCompare(preset.hex) == .orderedSame
+                    Button {
+                        monitor.config.menuBarTextColorHex = preset.hex
+                    } label: {
+                        Circle()
+                            .fill(Color(nsColor: NSColor(menuBarHex: preset.hex) ?? .black))
+                            .frame(width: 15, height: 15)
+                            .overlay(Circle().strokeBorder(
+                                isSelected ? Color.accentColor : Color.secondary.opacity(0.4),
+                                lineWidth: isSelected ? 2 : 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help(preset.name)
+                }
+                // 프리셋에 없는 색은 선택기로 직접 고른다.
+                ColorPicker("", selection: Binding(
+                    get: { Color(nsColor: current) },
+                    set: { monitor.config.menuBarTextColorHex = NSColor($0).menuBarHexString }
+                ), supportsOpacity: false)
+                .labelsHidden()
+            }
+        }
+    }
+
+    /// 메뉴바에서 읽히는 색만 골라 둔다 — 무채색과 패널 팔레트(테라코타·청록).
+    private static let textColorPresets: [(name: String, hex: String)] = [
+        ("검정 (기본)", "#000000"),
+        ("흰색", "#FFFFFF"),
+        ("연회색", "#B4B4B8"),
+        ("테라코타", "#D97757"),
+        ("청록", "#5C999E"),
+        ("주황", "#FF9F0A"),
+    ]
+
     /// 실측 사용량 조회 상태 — 성공 시 %·조직·갱신 시각, 실패 시 사유.
     @ViewBuilder private var serverStatus: some View {
         if let server = monitor.snapshot.server {
@@ -333,6 +370,85 @@ struct UsageSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+/// 메뉴바 디자인을 실제 렌더 결과로 골라 보는 카드 목록.
+///
+/// 미리보기는 지금 메뉴바에 뜨는 값을 그대로 쓴다. 아직 데이터가 없으면 링이 모두 비어
+/// 디자인을 견줄 수 없으므로 예시 값으로 채운다.
+private struct MenuBarStylePicker: View {
+    let monitor: UsageMonitor
+
+    private static let columns = [GridItem(.flexible(), spacing: 8),
+                                  GridItem(.flexible(), spacing: 8)]
+
+    private var selected: MenuBarStyle { monitor.config.menuBarDesign }
+    private var usesSample: Bool { !monitor.hasSessionData }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: Self.columns, spacing: 8) {
+                ForEach(MenuBarStyle.allCases) { style in
+                    card(style)
+                }
+            }
+            Text(selected.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if usesSample {
+                Label("아직 사용량 데이터가 없어 예시 값(62% · 창 45% 경과)으로 그렸습니다.",
+                      systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func card(_ style: MenuBarStyle) -> some View {
+        let isSelected = style == selected
+        return Button {
+            monitor.config.menuBarStyle = style.rawValue
+        } label: {
+            VStack(spacing: 7) {
+                // 메뉴바 라벨을 그대로 그린 이미지다. 배경도 메뉴바처럼 외관을 따라가는
+                // 색으로 둬 글자 색을 바꿨을 때 실제로 읽히는지 볼 수 있게 한다.
+                MenuBarContent(spec: spec(style))
+                    .frame(height: 24)
+                    .padding(.horizontal, 8)
+                    .background(Capsule(style: .continuous)
+                        .fill(Color(nsColor: .windowBackgroundColor)))
+                    .overlay(Capsule(style: .continuous).strokeBorder(.quaternary))
+                Text(style.title)
+                    .font(.caption2)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 9)
+            .padding(.horizontal, 6)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 1.5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(style.detail)
+    }
+
+    /// 이 디자인의 미리보기. 값이 있으면 지금 그대로, 없으면 예시 값으로 그린다.
+    private func spec(_ style: MenuBarStyle) -> MenuBarLabelSpec {
+        guard usesSample else { return monitor.menuBarLabelSpec(for: style) }
+        var trailing: [String] = []
+        if monitor.config.showsMenuBarWeekly { trailing.append("주 39%") }
+        if monitor.config.showsMenuBarRemaining { trailing.append("2h 14m") }
+        return MenuBarLabelSpec(style: style,
+                                model: .sample,
+                                leading: style.drawsPercentInIcon ? "" : "62%",
+                                trailing: trailing,
+                                textColor: monitor.config.menuBarTextColor)
     }
 }
 

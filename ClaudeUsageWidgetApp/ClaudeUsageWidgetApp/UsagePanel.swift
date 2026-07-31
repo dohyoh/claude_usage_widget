@@ -96,7 +96,7 @@ struct UsagePanel: View {
                 Text("갱신 \(snapshot.generatedAt, format: .dateTime.hour().minute().second())")
             }
             Spacer()
-            Button("한도 설정") {
+            Button("설정") {
                 SettingsWindow.activateApp()
                 openWindow(id: SettingsWindow.id)
             }
