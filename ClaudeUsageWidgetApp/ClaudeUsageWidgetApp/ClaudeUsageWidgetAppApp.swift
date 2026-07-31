@@ -16,12 +16,9 @@ struct ClaudeUsageWidgetAppApp: App {
         MenuBarExtra {
             UsagePanel(monitor: monitor)
         } label: {
-            HStack(spacing: 3) {
-                Image(systemName: monitor.hasSessionData
-                      ? "gauge.with.dots.needle.50percent"
-                      : "gauge.with.dots.needle.0percent")
-                Text(monitor.menuBarLabel)
-            }
+            // 아이콘·글자 모두 설정에서 고른 디자인이 정한다. label 은 snapshot 을 읽으므로
+            // 5초 갱신마다 다시 그려진다.
+            MenuBarContent(spec: monitor.menuBarLabelSpec)
         }
         .menuBarExtraStyle(.window)
 

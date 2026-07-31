@@ -36,6 +36,24 @@ extension Color {
     static let usageTimeTint = Color(red: 0.36, green: 0.60, blue: 0.62)
 }
 
+/// 진행 바를 놓는 자리의 크기. 글자 크기와 바 두께가 함께 바뀐다.
+///
+/// 같은 뷰를 위젯과 메뉴바 패널이 함께 쓰지만 자리 사정이 다르다. 작은 위젯은 높이가
+/// 모자라 줄여야 하고, 패널은 자리가 넉넉해 한 단계 키우는 편이 읽기 좋다.
+enum UsageBarSize: Sendable {
+    /// 작은 위젯 — 높이가 모자란 자리.
+    case compact
+    /// 중간 위젯 기준.
+    case regular
+    /// 메뉴바 패널 — 자리가 넉넉해 한 단계 크게 둔다.
+    case large
+
+    var labelFont: Font { self == .large ? .caption : .caption2 }
+    var rowSpacing: CGFloat { self == .compact ? 2 : (self == .regular ? 3 : 4) }
+    var usageTrackHeight: CGFloat { self == .compact ? 4 : (self == .regular ? 5 : 7) }
+    var timeTrackHeight: CGFloat { self == .large ? 4 : 3 }
+}
+
 /// 한도 소진율을 보여주는 한 줄. 위젯과 메뉴바가 같은 모양을 쓴다.
 struct UsageBar: View {
     let title: String
@@ -46,40 +64,39 @@ struct UsageBar: View {
     /// 창 전체 길이에서 지금까지 지나간 비율(0...1). nil이면 시간 바를 그리지 않는다
     /// — 롤링 집계처럼 리셋 시점 자체가 없는 경우.
     var elapsedRatio: Double?
-    /// 작은 위젯처럼 높이가 모자란 자리에서 줄 간격과 바 두께를 줄인다.
-    var compact: Bool = false
+    var size: UsageBarSize = .regular
 
     private var severity: UsageSeverity { UsageSeverity(ratio: ratio) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 2 : 3) {
+        VStack(alignment: .leading, spacing: size.rowSpacing) {
             HStack(spacing: 4) {
                 Text(title)
-                    .font(.caption2)
+                    .font(size.labelFont)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 2)
                 if let trailing {
                     Text(trailing)
-                        .font(.caption2)
+                        .font(size.labelFont)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
             }
 
             track(fill: severity.tint, ratio: ratio)
-                .frame(height: compact ? 4 : 5)
+                .frame(height: size.usageTrackHeight)
 
             if let elapsedRatio {
                 // 사용량과 같이 왼쪽에서 자라게 둔다. 두 바의 길이를 그대로 견줄 수 있어
                 // — 사용량 바가 더 길면 시간보다 빨리 태우는 중이다 — 소진 속도가 한눈에
                 // 보인다. 구분은 색과 두께가 맡는다.
                 track(fill: .usageTimeTint, ratio: elapsedRatio)
-                    .frame(height: 3)
+                    .frame(height: size.timeTrackHeight)
             }
 
             if !detail.isEmpty {
                 Text(detail)
-                    .font(.caption2)
+                    .font(size.labelFont)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
@@ -102,14 +119,16 @@ struct UsageBar: View {
 
 /// 시간 바가 무슨 색인지 한 번 알려주는 작은 범례. 자리가 있는 곳에서만 쓴다.
 struct UsageElapsedLegend: View {
+    var size: UsageBarSize = .regular
+
     var body: some View {
         HStack(spacing: 3) {
             Capsule(style: .continuous)
                 .fill(Color.usageTimeTint)
-                .frame(width: 10, height: 3)
+                .frame(width: size == .large ? 12 : 10, height: size.timeTrackHeight)
             Text("창에서 지난 시간")
         }
-        .font(.caption2)
+        .font(size.labelFont)
         .foregroundStyle(.tertiary)
     }
 }

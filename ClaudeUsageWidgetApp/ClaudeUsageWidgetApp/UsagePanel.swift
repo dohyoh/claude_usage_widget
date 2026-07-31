@@ -22,14 +22,14 @@ struct UsagePanel: View {
     private var config: UsageConfig { monitor.config }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             header
             content
             Divider()
             footer
         }
-        .padding(14)
-        .frame(width: 280)
+        .padding(16)
+        .frame(width: 320)
         .task {
             // 패널이 열려 있는 동안만 1초 틱을 돌린다.
             while !Task.isCancelled {
@@ -71,13 +71,13 @@ struct UsagePanel: View {
 
     // MARK: - 헤더 / 푸터
 
+    /// 제목 바로 옆에 새로고침을, 오른쪽 끝에 설정(톱니바퀴)을 둔다.
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Image(systemName: "sparkle")
                 .foregroundStyle(.tint)
             Text("Claude 사용량")
-                .font(.headline)
-            Spacer()
+                .font(.title3)
             Button {
                 monitor.refreshAll()
             } label: {
@@ -85,7 +85,17 @@ struct UsagePanel: View {
             }
             .buttonStyle(.borderless)
             .help("지금 다시 읽기 (서버 포함)")
+            Spacer()
+            Button {
+                SettingsWindow.activateApp()
+                openWindow(id: SettingsWindow.id)
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .help("설정")
         }
+        .imageScale(.large)
     }
 
     private var footer: some View {
@@ -96,24 +106,19 @@ struct UsagePanel: View {
                 Text("갱신 \(snapshot.generatedAt, format: .dateTime.hour().minute().second())")
             }
             Spacer()
-            Button("한도 설정") {
-                SettingsWindow.activateApp()
-                openWindow(id: SettingsWindow.id)
-            }
-            .buttonStyle(.link)
             Button("종료") {
                 NSApplication.shared.terminate(nil)
             }
             .buttonStyle(.link)
         }
-        .font(.caption2)
+        .font(.caption)
         .foregroundStyle(.secondary)
     }
 
     // MARK: - 서버 실측 섹션
 
     private func serverSection(_ server: ServerUsage) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if let five = server.fiveHour {
                 serverBar(title: "5시간 창", window: five,
                           length: ClaudeUsageLimits.sessionWindow)
@@ -127,7 +132,7 @@ struct UsagePanel: View {
                           length: ClaudeUsageLimits.weeklyWindow)
             }
             // 바 아래 얇은 청록 바가 무엇인지 한 번 알려준다.
-            UsageElapsedLegend()
+            UsageElapsedLegend(size: .large)
             HStack(spacing: 4) {
                 Image(systemName: "checkmark.seal.fill")
                     .foregroundStyle(.tint)
@@ -141,7 +146,7 @@ struct UsagePanel: View {
                 Text(server.fetchedAt, format: .dateTime.hour().minute())
                     .foregroundStyle(.tertiary)
             }
-            .font(.caption2)
+            .font(.caption)
             .foregroundStyle(.secondary)
         }
     }
@@ -164,14 +169,15 @@ struct UsagePanel: View {
                         ratio: window.ratio,
                         detail: detail,
                         trailing: "\(pct)%",
-                        elapsedRatio: window.elapsedRatio(at: now, window: length))
+                        elapsedRatio: window.elapsedRatio(at: now, window: length),
+                        size: .large)
     }
 
     /// 서버가 주지 않는 토큰·비용·모델별 상세(로컬 로그 기반).
     private func localBreakdown(_ block: SessionBlock?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Claude Code 로컬 상세")
-                .font(.caption2)
+                .font(.caption)
                 .foregroundStyle(.secondary)
             if let block {
                 HStack {
@@ -181,7 +187,7 @@ struct UsagePanel: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
-                .font(.caption)
+                .font(.subheadline)
             }
             HStack {
                 Label("오늘 \(config.metric.format(snapshot.todayTokens.value(for: config.metric)))",
@@ -190,7 +196,7 @@ struct UsagePanel: View {
                 Label("캐시 읽기 \(snapshot.weeklyTokens.cacheRead.abbreviatedTokenString)",
                       systemImage: "arrow.down.doc")
             }
-            .font(.caption2)
+            .font(.caption)
             .foregroundStyle(.secondary)
         }
     }
@@ -202,12 +208,13 @@ struct UsagePanel: View {
         let remaining = block.remainingTime(at: now)
         let used = config.metric.format(block.tokens.value(for: config.metric))
         let limit = config.metric.format(config.sessionLimit)
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 8) {
             UsageBar(title: "5시간 창 (추정)",
                      ratio: ratio,
                      detail: "\(used) / \(limit) · 요청 \(block.requestCount)회",
                      trailing: "\(Int((ratio * 100).rounded()))%",
-                     elapsedRatio: block.elapsedRatio(at: now))
+                     elapsedRatio: block.elapsedRatio(at: now),
+                     size: .large)
 
             // 시계 아이콘을 시간 바와 같은 색으로 둔다 — 이 줄이 그 바의 설명이다.
             HStack(spacing: 4) {
@@ -217,7 +224,7 @@ struct UsagePanel: View {
                 Text("(\(block.endsAt, format: .dateTime.hour().minute()))")
                     .foregroundStyle(.tertiary)
             }
-            .font(.caption2)
+            .font(.caption)
             .foregroundStyle(.secondary)
         }
     }
@@ -226,13 +233,14 @@ struct UsagePanel: View {
         let weeklyRatio = snapshot.weeklyUtilization(config: config)
         let used = config.metric.format(snapshot.weeklyTokens.value(for: config.metric))
         let limit = config.metric.format(config.weeklyLimit)
-        return VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 UsageBar(title: "\(config.weeklyTitle) (추정)",
                          ratio: weeklyRatio,
                          detail: "\(used) / \(limit)",
                          trailing: "\(Int((weeklyRatio * 100).rounded()))%",
-                         elapsedRatio: config.weeklyElapsedRatio(now: now))
+                         elapsedRatio: config.weeklyElapsedRatio(now: now),
+                         size: .large)
 
                 // 주간 리셋 요일을 지정했을 때만 리셋 시점이 존재한다.
                 if let reset = config.nextWeeklyReset(now: now) {
@@ -243,7 +251,7 @@ struct UsagePanel: View {
                         Text("(\(reset, format: .dateTime.weekday().hour().minute()))")
                             .foregroundStyle(.tertiary)
                     }
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                 }
             }
@@ -255,7 +263,7 @@ struct UsagePanel: View {
                 Label("캐시 읽기 \(snapshot.weeklyTokens.cacheRead.abbreviatedTokenString)",
                       systemImage: "arrow.down.doc")
             }
-            .font(.caption2)
+            .font(.caption)
             .foregroundStyle(.secondary)
         }
     }
@@ -265,17 +273,17 @@ struct UsagePanel: View {
         let top = snapshot.weeklyTokensByModel
             .sorted { $0.value > $1.value }
             .prefix(4)
-        return VStack(alignment: .leading, spacing: 3) {
+        return VStack(alignment: .leading, spacing: 4) {
             Text("모델별 (7일)")
-                .font(.caption2)
+                .font(.caption)
                 .foregroundStyle(.secondary)
             ForEach(Array(top), id: \.key) { model, tokens in
                 HStack {
                     Text(model.prettyModelName)
-                        .font(.caption)
+                        .font(.subheadline)
                     Spacer()
                     Text(tokens.abbreviatedTokenString)
-                        .font(.caption)
+                        .font(.subheadline)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
@@ -288,7 +296,7 @@ struct UsagePanel: View {
             Image(systemName: "moon.zzz")
                 .foregroundStyle(.secondary)
             Text("진행 중인 5시간 창이 없습니다")
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
     }
@@ -298,7 +306,7 @@ struct UsagePanel: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             Text(reason)
-                .font(.caption)
+                .font(.subheadline)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -310,7 +318,7 @@ struct UsagePanel: View {
                 Image(systemName: "wifi.exclamationmark")
                 Text("실측 사용량: \(reason)")
             }
-            .font(.caption2)
+            .font(.caption)
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }

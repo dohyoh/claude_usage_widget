@@ -48,7 +48,25 @@ struct UsageConfig: Codable, Hashable, Sendable {
     /// 메뉴바 라벨에 5시간 창 리셋까지 남은 시간을 함께 표시할지. nil = 꺼짐.
     var menuBarShowsRemaining: Bool?
 
+    /// 메뉴바 아이콘 디자인(`MenuBarStyle`의 rawValue).
+    ///
+    /// 모르는 값이나 nil이면 기본 디자인으로 되돌린다. 이전 버전 설정 파일에 키가 없어도
+    /// 디코딩이 깨지지 않게 문자열 Optional로 두고, 판단은 `menuBarDesign`을 쓴다.
+    var menuBarStyle: String?
+
+    /// 메뉴바 글자 색(`#RRGGBB`). nil이면 검정.
+    ///
+    /// 라벨을 직접 그리기 때문에 색을 고를 수 있다. 링·막대의 사용량 색은 경고 단계를
+    /// 나타내므로 이 설정을 따르지 않는다. 이전 버전 설정 파일 호환을 위해 Optional 로
+    /// 두고, 실제 값은 `menuBarTextColor` 를 쓴다.
+    var menuBarTextColorHex: String?
+
     static let `default` = UsageConfig()
+
+    /// 실제로 그릴 메뉴바 디자인.
+    var menuBarDesign: MenuBarStyle {
+        menuBarStyle.flatMap(MenuBarStyle.init(rawValue:)) ?? .default
+    }
 
     /// 메뉴바에 주간 소진율을 붙일지. 설정이 없으면 꺼짐.
     var showsMenuBarWeekly: Bool { menuBarShowsWeekly ?? false }

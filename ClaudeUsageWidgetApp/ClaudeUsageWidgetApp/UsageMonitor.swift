@@ -130,27 +130,71 @@ final class UsageMonitor {
         reloadWidget(force: false)
     }
 
-    /// 메뉴바 라벨에 쓰는 짧은 텍스트.
-    ///
-    /// 5시간 창 소진율은 항상 쓰고, 주간 소진율과 리셋까지 남은 시간은 설정에서 켠 것만
-    /// « · » 로 이어 붙인다. 메뉴바 폭은 다른 앱과 나눠 쓰는 자리라 기본은 하나만 둔다.
-    var menuBarLabel: String {
-        var parts = [sessionLabel]
-        if config.showsMenuBarWeekly, let weekly = weeklyLabel { parts.append(weekly) }
-        if config.showsMenuBarRemaining, let remaining = remainingLabel { parts.append(remaining) }
-        return parts.joined(separator: " · ")
+    // MARK: - 메뉴바 표시
+
+    /// 메뉴바 아이콘에 그릴 값 묶음 — 소진율·창에서 지난 시간·색 단계·숫자.
+    var menuBarIconModel: MenuBarIconModel {
+        MenuBarIconModel(usage: snapshot.effectiveSessionRatio(config: config),
+                         elapsed: sessionElapsedRatio,
+                         severity: sessionSeverity,
+                         percent: sessionPercent)
     }
 
-    /// 5시간 창 소진율. 서버 실측이 있으면 그 값을 쓴다.
-    private var sessionLabel: String {
+    /// 지금 설정으로 그릴 메뉴바 라벨.
+    var menuBarLabelSpec: MenuBarLabelSpec {
+        menuBarLabelSpec(for: config.menuBarDesign)
+    }
+
+    /// 특정 디자인으로 그릴 메뉴바 라벨 — 설정 창의 미리보기가 디자인별로 쓴다.
+    ///
+    /// 사용량(5시간 창 소진율)은 아이콘 왼쪽에, 주간 소진율과 남은 시간은 오른쪽에 둔다.
+    /// 숫자를 아이콘 안에 그리는 디자인에서는 같은 값이 두 번 나오지 않게 왼쪽을 비운다.
+    func menuBarLabelSpec(for style: MenuBarStyle) -> MenuBarLabelSpec {
+        MenuBarLabelSpec(style: style,
+                         model: menuBarIconModel,
+                         leading: style.drawsPercentInIcon ? "" : sessionLabel,
+                         trailing: menuBarTrailingLines,
+                         textColor: config.menuBarTextColor)
+    }
+
+    /// 아이콘 오른쪽에 둘 줄. 설정에서 켠 것만 넣는다 — 둘 다면 위아래로 쌓인다.
+    ///
+    /// 메뉴바 폭은 다른 앱과 나눠 쓰는 자리라 기본은 사용량 하나만 둔다.
+    private var menuBarTrailingLines: [String] {
+        var lines: [String] = []
+        if config.showsMenuBarWeekly, let weekly = weeklyLabel { lines.append(weekly) }
+        if config.showsMenuBarRemaining, let remaining = remainingLabel { lines.append(remaining) }
+        return lines
+    }
+
+    /// 5시간 창 소진율(%). 서버 실측이 있으면 그 값을 쓴다. 표시할 값이 없으면 nil.
+    var sessionPercent: Int? {
         if let window = snapshot.usableServerUsage(config: config)?.fiveHour {
-            return "\(Int(window.utilizationPercent.rounded()))%"
+            return Int(window.utilizationPercent.rounded())
         }
-        guard snapshot.activeBlock != nil else { return "—" }
+        guard snapshot.activeBlock != nil else { return nil }
         let ratio = snapshot.sessionUtilization(config: config)
-        if ratio > 0 {
-            return "\(Int((ratio * 100).rounded()))%"
+        guard ratio > 0 else { return nil }
+        return Int((ratio * 100).rounded())
+    }
+
+    /// 5시간 창에서 지금까지 지나간 비율(0...1). 진행 중인 창이 없으면 nil.
+    ///
+    /// 서버 실측이 준 리셋 시각을 먼저 쓰고, 없으면 로그로 잡은 창의 경과를 쓴다.
+    private var sessionElapsedRatio: Double? {
+        let now = Date()
+        if let window = snapshot.usableServerUsage(config: config)?.fiveHour,
+           let ratio = window.elapsedRatio(at: now, window: ClaudeUsageLimits.sessionWindow) {
+            return ratio
         }
+        guard let block = snapshot.activeBlock, block.isActive(at: now) else { return nil }
+        return block.elapsedRatio(at: now)
+    }
+
+    /// 5시간 창 소진율 텍스트. 소진율을 못 구하면 측정값 자체나 «—» 로 대체한다.
+    private var sessionLabel: String {
+        if let percent = sessionPercent { return "\(percent)%" }
+        guard snapshot.activeBlock != nil else { return "—" }
         return config.metric.format(snapshot.sessionValue(for: config.metric))
     }
 
