@@ -438,6 +438,10 @@ DMG 는 `assets/` 가 있으면 **창 배경·볼륨 아이콘·아이콘 배치
 
 `SIGN_ID` 환경변수로 직접 지정할 수도 있습니다. Apple Development 로 서명한 빌드는 공증할 수 없으므로, `NOTARY_PROFILE` 을 줬더라도 공증 단계를 건너뜁니다 — 올려서 거부당하게 두지 않습니다.
 
+> **Hardened Runtime 과 WKWebView** — 인증서로 서명하면 `package.sh` 가 Hardened Runtime 을 켭니다. 그 아래에서도 로그인 창이 정상 동작합니다(패키징한 DMG 로 확인). WKWebView 의 웹 콘텐츠는 Apple 이 서명한 별도 XPC 프로세스(`com.apple.WebKit.WebContent`)에서 돌아가므로, JavaScriptCore 의 JIT 이 우리 앱의 런타임 제한을 받지 않습니다. `com.apple.security.cs.allow-jit` 같은 예외는 필요하지 않습니다.
+>
+> `install.sh` 는 Hardened Runtime 을 켜지 않습니다 — 로컬 설치에 필요하지 않고, 공증 요건인 배포용에서만 켭니다.
+
 ```bash
 # 유료 가입 후 — 인증서는 자동 감지되고, 공증만 프로필을 지정합니다
 xcrun notarytool store-credentials notary --apple-id <id> --team-id <team>
