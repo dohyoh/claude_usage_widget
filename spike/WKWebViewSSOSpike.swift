@@ -72,12 +72,15 @@ let googleBlockMarkers = [
 
 // MARK: - 앱
 
-final class SpikeDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class SpikeDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate,
+                           WKUIDelegate, WKScriptMessageHandler {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var statusLabel: NSTextField!
     /// 방문한 호스트 순서 — SSO 왕복이 어디서 끊겼는지 보려고 남긴다.
     private var visitedHosts: [String] = []
+    /// Google 로그인은 팝업으로 진행된다. 팝업 창을 살려 둘 곳.
+    private var popupWindows: [NSWindow] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.section("스파이크 시작")
@@ -90,8 +93,15 @@ final class SpikeDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate
         // 지속 저장소. 설계상 여기에 세션을 맡기므로 그대로 쓴다.
         configuration.websiteDataStore = .default()
 
+        // 페이지가 삼켜 버리는 실패를 보기 위해 console.error 와 미처리 예외를 넘겨받는다.
+        // 300자로 잘라 둔다 — 토큰이 섞여 나올 수 있다.
+        configuration.userContentController.add(self, name: "spike")
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: Self.consoleBridge, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         webView.customUserAgent = UserAgentChoice.custom
         webView.allowsBackForwardNavigationGestures = true
 
@@ -121,6 +131,7 @@ final class SpikeDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate
                           defer: false)
         window.title = "WKWebView + claude.ai 로그인 스파이크"
         window.contentView = stack
+        window.isReleasedWhenClosed = false
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -135,11 +146,92 @@ final class SpikeDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        if let host = navigationAction.request.url?.host, visitedHosts.last != host {
+        if let url = navigationAction.request.url, let host = url.host, visitedHosts.last != host {
             visitedHosts.append(host)
-            Log.info("이동 → \(host)")
+            // 경로까지 남기면 흐름이 보인다. 쿼리는 OAuth 코드가 들어 있어 찍지 않는다.
+            Log.info("이동 → \(host)\(url.path)")
         }
         decisionHandler(.allow)
+    }
+
+    // MARK: 팝업 — Google 로그인은 window.open 으로 열린다
+
+    /// 이걸 구현하지 않으면 WKWebView 는 팝업 요청을 조용히 버리고, SSO 는 콜백을 못 받아
+    /// "로그인 중 오류" 로 끝난다.
+    func webView(_ webView: WKWebView,
+                 createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        let url = navigationAction.request.url
+        Log.ok("팝업 요청 → \(url?.host ?? "?")\(url?.path ?? "")")
+
+        // 넘어온 configuration 을 그대로 써야 쿠키·저장소가 부모와 공유된다.
+        let popup = WKWebView(frame: NSRect(x: 0, y: 0, width: 520, height: 660),
+                              configuration: configuration)
+        popup.navigationDelegate = self
+        popup.uiDelegate = self
+        popup.customUserAgent = UserAgentChoice.custom
+
+        let popupWindow = NSWindow(contentRect: popup.frame,
+                                   styleMask: [.titled, .closable, .resizable],
+                                   backing: .buffered,
+                                   defer: false)
+        popupWindow.title = "로그인"
+        popupWindow.contentView = popup
+        // 배열에 강한 참조를 들고 있으므로 닫을 때 자동 해제를 끄지 않으면 과다 해제로 죽는다.
+        popupWindow.isReleasedWhenClosed = false
+        popupWindow.center()
+        popupWindow.makeKeyAndOrderFront(nil)
+        popupWindows.append(popupWindow)
+        return popup
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        Log.info("팝업이 스스로 닫혔습니다 — 흐름이 부모 창으로 돌아갑니다.")
+        guard let index = popupWindows.firstIndex(where: { $0.contentView === webView }) else { return }
+        let popupWindow = popupWindows.remove(at: index)
+        // 이 콜백은 WebKit 이 아직 해당 웹뷰를 쓰고 있는 중에 온다. 같은 사이클에서 창을
+        // 걷어내면 그 웹뷰가 해제돼 죽는다. 다음 런루프로 미룬다.
+        DispatchQueue.main.async { popupWindow.close() }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping () -> Void) {
+        Log.info("JS alert: \(message.prefix(200))")
+        completionHandler()
+    }
+
+    // MARK: 페이지 콘솔
+
+    private static let consoleBridge = """
+    (function () {
+      const send = (level, args) => {
+        try {
+          const text = Array.from(args).map(a => {
+            try { return typeof a === 'string' ? a : JSON.stringify(a); } catch (e) { return String(a); }
+          }).join(' ');
+          window.webkit.messageHandlers.spike.postMessage(level + ': ' + text.slice(0, 300));
+        } catch (e) {}
+      };
+      const originalError = console.error, originalWarn = console.warn;
+      console.error = function () { send('error', arguments); originalError.apply(console, arguments); };
+      console.warn  = function () { send('warn',  arguments); originalWarn.apply(console, arguments); };
+      window.addEventListener('error', e => send('uncaught', [e.message]));
+      window.addEventListener('unhandledrejection', e => send('rejection', [String(e.reason)]));
+      // 팝업이 실제로 요청됐는지 확인한다.
+      const open = window.open;
+      window.open = function (...args) {
+        send('window.open', [String(args[0] ?? '')]);
+        return open.apply(window, args);
+      };
+    })();
+    """
+
+    func userContentController(_ controller: WKUserContentController,
+                              didReceive message: WKScriptMessage) {
+        guard let text = message.body as? String else { return }
+        Log.line("페이지: \(text)")
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
