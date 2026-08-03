@@ -92,7 +92,14 @@ enum ClaudeServerUsage {
         if AccountIdentity.needsRefresh(cache: cachedAccount,
                                         sessionFingerprint: fingerprint,
                                         selectedOrganization: organization.uuid) {
-            account = AccountCache(email: nil,
+            // 이메일은 이때만 조회한다. 조직 UUID 가 같아도 계정은 다를 수 있어서(같은 팀의
+            // 다른 멤버) 필요하지만, 매 조회마다 부를 이유는 없다. 못 얻어도 조직 단위 비교는
+            // 그대로 되므로 실패를 오류로 올리지 않는다.
+            var email: String?
+            if case .success(let data) = await UsageAPI.get("/account", jar: jar) {
+                email = ClaudeAccountResponse.email(fromJSON: data)
+            }
+            account = AccountCache(email: email,
                                    organizationUuid: organization.uuid,
                                    organizationName: organization.name,
                                    sessionFingerprint: fingerprint,

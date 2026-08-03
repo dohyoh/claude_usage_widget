@@ -38,7 +38,8 @@ macOS 메뉴바와 알림센터 위젯에서 **Claude 사용량**(5시간 한도
 - 앱은 세션 값을 **어디에도 복사하지 않습니다.** WebKit 저장소에 그대로 두고 조회할 때 쿠키를 읽습니다.
 - 로그인 창과 조회가 **같은 저장소**를 쓰므로 `cf_clearance`·UA가 일관됩니다. 쿠키만 뽑아 다른 클라이언트로 옮기면 Cloudflare 챌린지를 받을 수 있습니다.
 - 필요한 쿠키: `sessionKey`(로그인 세션), `lastActiveOrg`(조직 UUID). 실제로는 `claude.ai` 도메인 쿠키 전체를 브라우저처럼 함께 보냅니다. **다른 도메인(Google·hCaptcha) 쿠키는 걸러냅니다** — SSO 왕복에서 같은 저장소에 함께 쌓이므로 필터가 없으면 남의 도메인 자격증명이 `claude.ai` 요청에 실려 나갑니다.
-- **Google 로그인은 팝업으로 진행됩니다.** `WKUIDelegate.createWebViewWith`를 구현하지 않으면 `WKWebView`가 `window.open`을 조용히 버리고 SSO가 콜백을 받지 못해 "로그인 중 오류"로 끝납니다.
+- **Google 로그인은 팝업으로 진행됩니다.** `WKUIDelegate.createWebViewWith`를 구현하지 않으면 `WKWebView`가 `window.open`을 조용히 버리고 SSO가 콜백을 받지 못해 "로그인 중 오류"로 끝납니다. 구현하면 `accounts.google.com` 왕복이 정상 완주합니다 — `disallowed_useragent` 차단은 없고 UA를 바꿀 필요도 없습니다(기본 Safari 계열로 확인).
+- 팝업 창을 배열에 들고 있는 상태에서 `close()`를 부르면 과다 해제로 죽습니다. `NSWindow.isReleasedWhenClosed = false` 가 필요하고, `webViewDidClose` 는 WebKit 이 그 웹뷰를 아직 쓰는 중에 오므로 창 정리를 다음 런루프로 미뤄야 합니다.
 
 ### 사용량 API
 
@@ -76,7 +77,18 @@ Cookie: <웹뷰 저장소의 claude.ai 쿠키 전체>
 
 고른 조직이 목록에서 사라지면(탈퇴·계정 변경) 자동 선택으로 내려가되 **그 사실을 알립니다** — 조용히 다른 조직 숫자를 사용자 것으로 보여주지 않습니다. 여러 조직이 있으면 설정에 **조직** 선택이 나타납니다.
 
-**로컬 추정과 계정이 다를 수 있습니다.** 로컬 추정은 늘 `~/.claude/projects` 로그, 즉 **Claude Code 계정**의 활동입니다. 연동 계정이 그와 다르면 설정에 경고가 붙습니다. Claude Code 계정은 `~/.claude.json`의 `oauthAccount`에서 인증 없이 읽습니다.
+**로컬 추정과 계정이 다를 수 있습니다.** 로컬 추정은 늘 `~/.claude/projects` 로그, 즉 **Claude Code 계정**의 활동입니다. 연동 계정이 그와 다르면 설정에 경고가 붙습니다.
+
+두 쪽을 이렇게 알아냅니다.
+
+| 쪽 | 출처 | 비용 |
+|---|---|---|
+| Claude Code 계정 | `~/.claude.json` 의 `oauthAccount` | 인증 불필요, 파일 읽기 |
+| 연동 계정 | `GET /api/account` → `email_address` | 로그인·조직이 **바뀔 때만** 1회 |
+
+이메일까지 비교하는 이유는 **조직 UUID가 같아도 계정은 다를 수 있기** 때문입니다 — 같은 팀 조직의 다른 멤버로 로그인한 경우입니다. 이메일을 못 얻으면 조직 단위 비교로 자동 축소됩니다.
+
+계정 정보는 `~/.claude/.usage-widget-account.json` 에 캐시하고, **세션 지문이 바뀌거나 조직이 바뀔 때만** 다시 조회합니다. 지문은 세션 쿠키의 sha256 앞 16자이고, 쿠키 원본은 저장하지 않습니다.
 
 ### 경계·프라이버시
 
