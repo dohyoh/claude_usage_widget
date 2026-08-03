@@ -306,6 +306,37 @@ final class SpikeDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate
         }
     }
 
+    /// JSON 안에서 이름에 "email" 이 든 문자열 필드를 찾아 (경로, 마스킹한 값) 으로 돌려준다.
+    ///
+    /// 어느 엔드포인트가 계정 이메일을 주는지 찾는 게 목적이라 값 자체는 필요하지 않다.
+    private static func emailFields(in object: Any, path: String = "", depth: Int = 0)
+        -> [(String, String)] {
+        guard depth < 6 else { return [] }
+        var found: [(String, String)] = []
+        if let dictionary = object as? [String: Any] {
+            for (key, value) in dictionary {
+                let child = path.isEmpty ? key : "\(path).\(key)"
+                if key.lowercased().contains("email"), let text = value as? String, !text.isEmpty {
+                    found.append((child, mask(text)))
+                } else {
+                    found.append(contentsOf: emailFields(in: value, path: child, depth: depth + 1))
+                }
+            }
+        } else if let array = object as? [Any] {
+            for (index, value) in array.prefix(3).enumerated() {
+                found.append(contentsOf: emailFields(in: value, path: "\(path)[\(index)]",
+                                                     depth: depth + 1))
+            }
+        }
+        return found
+    }
+
+    /// 앞 3자 + 도메인만 남긴다. 본인 계정인지 알아볼 수는 있고 그대로 새지는 않는다.
+    private static func mask(_ email: String) -> String {
+        guard let at = email.firstIndex(of: "@") else { return "***" }
+        return "\(email[email.startIndex..<at].prefix(3))…\(email[at...])"
+    }
+
     /// 확보한 쿠키로 실제 사용량 엔드포인트를 때려 본다.
     private static func probeAPI(cookieHeader: String, lastActiveOrg: String?) async {
         Log.section("3. 사용량 API 호출 (Cloudflare 통과 여부)")
@@ -372,6 +403,38 @@ final class SpikeDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate
                 }
                 Log.section("결론")
                 Log.ok("세 항목 모두 통과 — 자체 로그인으로 실측 사용량을 가져올 수 있습니다.")
+
+                // 4. 계정 이메일을 주는 엔드포인트 찾기.
+                //
+                // 실측 계정과 Claude Code 계정이 "같은 조직의 다른 멤버" 인 경우를 잡으려면
+                // 이메일이 필요하다. organizationUuid 만 비교하면 그 경우를 놓친다.
+                //
+                // 이메일은 마스킹해서 찍는다.
+                Log.section("4. 계정 이메일 엔드포인트 탐색")
+                let candidates = [
+                    "/account",
+                    "/auth/current_account",
+                    "/bootstrap",
+                    "/organizations/\(organizationUuid)/current_account",
+                ]
+                for path in candidates {
+                    guard let (code, data) = await fetch(path) else { continue }
+                    guard code == 200,
+                          let json = try? JSONSerialization.jsonObject(with: data) else {
+                        Log.info("[\(code)] \(path)")
+                        continue
+                    }
+                    let emails = Self.emailFields(in: json)
+                    if emails.isEmpty {
+                        Log.info("[200] \(path) → 이메일 필드 없음. 최상위 키: "
+                                 + ((json as? [String: Any]).map { $0.keys.sorted().prefix(12).joined(separator: ", ") } ?? "-"))
+                    } else {
+                        Log.ok("[200] \(path) → 이메일 발견")
+                        for (keyPath, masked) in emails.prefix(5) {
+                            Log.info("    \(keyPath) = \(masked)")
+                        }
+                    }
+                }
             } else {
                 Log.bad("/organizations/{org}/usage → \(code)")
                 Log.info("  본문 앞부분: \(String(data: data.prefix(300), encoding: .utf8) ?? "?")")
