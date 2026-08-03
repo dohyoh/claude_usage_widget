@@ -258,6 +258,10 @@ cask "$CASK_TOKEN" do
   zap trash: [
     "~/.claude/.usage-widget-snapshot.json",
     "~/.claude/.usage-widget-config.json",
+    "~/.claude/.usage-widget-account.json",
+    "~/Library/WebKit/sdh.ClaudeUsageWidgetApp",
+    "~/Library/HTTPStorages/sdh.ClaudeUsageWidgetApp",
+    "~/Library/Caches/sdh.ClaudeUsageWidgetApp",
   ]
 EOF
 
@@ -274,16 +278,22 @@ cat <<'EOF'
 
       brew install --cask --no-quarantine claude-usage-widget
 
-    실측 사용량(claude.ai)을 쓰려면 Claude 데스크톱 앱이 설치·로그인돼 있어야 하고,
-    첫 조회 때 키체인 접근 허용 창에서 «항상 허용» 을 눌러야 합니다.
+    실측 사용량(claude.ai)을 쓰려면 설정에서 «Claude 로그인» 을 눌러 앱 안의 로그인
+    창에서 로그인하세요. 세션은 앱의 웹 저장소에만 남고, 키체인은 쓰지 않습니다.
+    Claude 데스크톱 앱은 필요하지 않습니다.
+
+    앱을 지울 때 로그인 세션까지 함께 지우려면:  brew uninstall --zap --cask claude-usage-widget
   EOS
 EOF
 else
 cat <<'EOF'
 
   caveats <<~EOS
-    실측 사용량(claude.ai)을 쓰려면 Claude 데스크톱 앱이 설치·로그인돼 있어야 하고,
-    첫 조회 때 키체인 접근 허용 창에서 «항상 허용» 을 눌러야 합니다.
+    실측 사용량(claude.ai)을 쓰려면 설정에서 «Claude 로그인» 을 눌러 앱 안의 로그인
+    창에서 로그인하세요. 세션은 앱의 웹 저장소에만 남고, 키체인은 쓰지 않습니다.
+    Claude 데스크톱 앱은 필요하지 않습니다.
+
+    앱을 지울 때 로그인 세션까지 함께 지우려면:  brew uninstall --zap --cask claude-usage-widget
   EOS
 EOF
 fi
