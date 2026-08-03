@@ -228,6 +228,36 @@ enum UsageSharedStore {
         return writeAtomically(data, to: configURL)
     }
 
+    // MARK: - Account
+
+    /// 실측을 가져온 계정 캐시. 설정과 수명주기가 달라 파일을 따로 둔다.
+    static var accountURL: URL {
+        ClaudeUsageReader.defaultClaudeHome.appendingPathComponent(".usage-widget-account.json")
+    }
+
+    static func loadAccount() -> AccountCache? {
+        loadAccount(from: accountURL)
+    }
+
+    /// 지정한 파일에서 계정 캐시를 읽는다. 파일이 없거나 형식이 어긋나면 nil.
+    ///
+    /// 설정과 달리 기본값이 없다 — 캐시가 없으면 "아직 모른다"이고, 그때는 다시 조회한다.
+    static func loadAccount(from url: URL) -> AccountCache? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? decoder.decode(AccountCache.self, from: data)
+    }
+
+    @discardableResult
+    static func save(_ account: AccountCache) -> Bool {
+        save(account, to: accountURL)
+    }
+
+    @discardableResult
+    static func save(_ account: AccountCache, to url: URL) -> Bool {
+        guard let data = try? encoder.encode(account) else { return false }
+        return writeAtomically(data, to: url)
+    }
+
     // MARK: - Helpers
 
     /// 위젯이 반쯤 쓰인 파일을 읽지 않도록 임시 파일에 쓰고 교체한다.
