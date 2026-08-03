@@ -421,11 +421,22 @@ DMG 는 `assets/` 가 있으면 **창 배경·볼륨 아이콘·아이콘 배치
 
 작은 크기(16·32px)는 축소만 하지 않고 **반짝임을 빼고 링을 굵게** 그린 별도 변형을 씁니다 — 그대로 줄이면 두 요소가 뭉개져 무엇인지 읽히지 않습니다.
 
+`install.sh` 와 `package.sh` 는 [signing.sh](signing.sh) 의 같은 규칙으로 자격을 찾습니다.
+
+```
+1. Developer ID Application  — 배포용. 공증까지 갈 수 있는 유일한 자격
+2. Apple Development         — 무료 계정으로도 발급된다. 공증은 못 하지만 신원은 안정된다
+3. 없으면 ad-hoc
+```
+
 | 보유 자격 | 하는 일 | 받는 사람 경험 |
 |---|---|---|
-| 없음 (현재) | ad-hoc 서명 그대로 DMG | Gatekeeper 우회 필요 — Cask `caveats` 에 안내가 자동 포함됨 |
+| 없음 | ad-hoc 서명 그대로 DMG | Gatekeeper 우회 필요 — Cask `caveats` 에 안내가 자동 포함됨 |
+| Apple Development (현재) | 서명 + Hardened Runtime. **코드 신원이 안정됨** | 그대로 — 공증이 없으므로 Gatekeeper 우회 필요 |
 | Developer ID 인증서 | 서명 + Hardened Runtime | 여전히 공증 경고 |
 | + 공증 프로필 | 공증(notarize) + 스테이플 | **경고 없이 바로 실행** |
+
+`SIGN_ID` 환경변수로 직접 지정할 수도 있습니다. Apple Development 로 서명한 빌드는 공증할 수 없으므로, `NOTARY_PROFILE` 을 줬더라도 공증 단계를 건너뜁니다 — 올려서 거부당하게 두지 않습니다.
 
 ```bash
 # 유료 가입 후 — 인증서는 자동 감지되고, 공증만 프로필을 지정합니다
@@ -443,7 +454,27 @@ xattr -dr com.apple.quarantine /Applications/ClaudeUsageWidgetApp.app
 
 > `spctl -a` 는 이 앱을 항상 `rejected` 로 판정합니다(ad-hoc 서명이므로). 하지만 그건 **정책 평가 결과**이고 실행 차단과 다릅니다 — Gatekeeper 가 실제로 막는 것은 **quarantine 속성이 붙어 있을 때**뿐이라, 위 명령이면 정상 실행됩니다. 직접 빌드해 설치하는 경우(`./install.sh`)는 애초에 quarantine 이 붙지 않아 아무 조치가 필요 없습니다.
 
-ad-hoc 서명은 designated requirement 가 `cdhash` 라서 재빌드마다 서명이 달라집니다. 예전에는 그 때문에 업데이트할 때마다 키체인 허용 창이 다시 떴지만, 자체 로그인으로 바꾼 뒤 키체인을 쓰지 않으므로 이 문제는 사라졌습니다. 서명 안정화는 이제 Gatekeeper·공증 목적으로만 의미가 있습니다.
+### ad-hoc 서명이 왜 문제인가
+
+ad-hoc 서명의 designated requirement 는 `cdhash` 하나입니다.
+
+```
+designated => cdhash H"cb541b976398ed6fffff04c493c2f082d385c341"
+```
+
+바이너리가 1비트만 바뀌어도 **다른 신원**이 됩니다. 그러면 코드 신원에 묶인 상태 — 로그인 항목 등록(`SMAppService`), TCC 허용 — 가 재빌드마다 초기화됩니다. 인증서로 서명하면 DR 이 이렇게 바뀝니다.
+
+```
+designated => identifier "sdh.ClaudeUsageWidgetApp" and anchor apple generic
+  and certificate leaf[subject.CN] = "Apple Development: … (TEAMID)"
+  and certificate 1[field.1.2.840.113635.100.6.2.1]
+```
+
+`cdhash` 가 없으므로 바이너리가 바뀌어도 같은 신원입니다. 인증서를 갱신해도 CN 이 같으면 그대로 유지됩니다.
+
+> 예전에는 이 문제가 훨씬 크게 나타났습니다. 실측 사용량을 위해 키체인의 `Claude Safe Storage` 를 읽던 시절에는 **업데이트마다 키체인 허용 창이 다시 떴습니다.** 자체 로그인으로 바꿔 키체인을 쓰지 않게 되면서 그 증상은 사라졌고, 남은 이득은 로그인 항목·TCC 상태의 안정성입니다.
+>
+> 서명 주체를 바꾸면 DR 이 달라지므로 **전환 직후 한 번은** 기존에 부여된 상태가 초기화됩니다. 그 뒤로는 안정됩니다.
 
 ### Homebrew 로 배포하기
 

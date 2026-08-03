@@ -31,28 +31,36 @@ die() { echo "오류: $*" >&2; exit 1; }
 command -v xcodebuild >/dev/null 2>&1 || die "xcodebuild 를 찾을 수 없습니다. Xcode 를 설치하세요."
 
 # ── 자격 확인 ────────────────────────────────────────────────────────────────
-SIGN_ID="${SIGN_ID:-}"
-if [ -z "$SIGN_ID" ]; then
-    # 이름에 팀 ID 가 붙어 있어 그대로 codesign 에 넘길 수 있다.
-    SIGN_ID="$(security find-identity -v 2>/dev/null \
-        | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"' || true)"
-fi
+# 자격 탐색 규칙은 install.sh 와 공유한다 (signing.sh 주석 참고).
+# shellcheck source=signing.sh
+source "$(cd "$(dirname "$0")" && pwd)/signing.sh"
+resolve_signing_identity
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
 
 if [ -n "$SIGN_ID" ]; then
     echo "==> 서명: $SIGN_ID"
     HARDENED=YES
+    if [ "$SIGN_KIND" = "development" ]; then
+        echo "    Apple Development 인증서입니다 — 서명은 안정되지만 공증은 할 수 없습니다."
+        echo "    받는 사람은 여전히 Gatekeeper 를 우회해야 합니다."
+    fi
 else
-    echo "==> 서명: 건너뜀 (Developer ID Application 인증서가 없습니다)"
+    SIGN_KIND=""
+    echo "==> 서명: 건너뜀 (Developer ID Application·Apple Development 인증서가 없습니다)"
     echo "    → ad-hoc 서명으로 묶습니다. 받는 사람이 Gatekeeper 를 우회해야 합니다."
     HARDENED=NO
 fi
-if [ -n "$SIGN_ID" ] && [ -n "$NOTARY_PROFILE" ]; then
-    echo "==> 공증: 프로필 \"$NOTARY_PROFILE\" 사용"
-    NOTARIZE=1
-else
+
+if [ -z "$NOTARY_PROFILE" ] || [ -z "$SIGN_ID" ]; then
     echo "==> 공증: 건너뜀"
     NOTARIZE=0
+elif [ "$SIGN_KIND" = "development" ]; then
+    # Apple Development 로 서명한 것을 공증에 올리면 거부된다. 시도해서 실패하게 두지 않는다.
+    echo "==> 공증: 건너뜀 (Apple Development 서명은 공증할 수 없습니다)"
+    NOTARIZE=0
+else
+    echo "==> 공증: 프로필 \"$NOTARY_PROFILE\" 사용"
+    NOTARIZE=1
 fi
 
 # ── 빌드 ─────────────────────────────────────────────────────────────────────
