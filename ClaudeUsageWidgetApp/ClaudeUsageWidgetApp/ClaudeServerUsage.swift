@@ -152,15 +152,8 @@ private enum ChromiumCrypto {
 
 // MARK: - 쿠키 저장소(SQLite)
 
-/// claude.ai에 붙일 때 필요한 쿠키 모음.
-struct ClaudeCookieJar: Sendable {
-    /// 브라우저가 보내듯 합친 `name=value; …` 헤더 (claude.ai 도메인 쿠키 전체).
-    let cookieHeader: String
-    /// 마지막으로 활성화된 조직 UUID(있으면).
-    let lastActiveOrg: String?
-    /// 로그인 세션 쿠키가 있는지.
-    let hasSession: Bool
-}
+// ClaudeCookieJar 는 Shared/ClaudeCookieJar.swift 로 옮겼다 — 자체 로그인에서는 쿠키가
+// WKHTTPCookieStore 에서 오므로, 조립 규칙을 SQLite 코드와 떼어내 따로 검증한다.
 
 private enum ClaudeCookieStore {
     enum LoadError: LocalizedError {
