@@ -65,6 +65,41 @@ grep -E "error:|warning: .*(deprecated|unused)|\*\* BUILD" "$LOG" || true
 BUILT="$BUILD_DIR/Build/Products/Release/$APP_NAME"
 [ -d "$BUILT" ] || die "빌드 산출물을 찾을 수 없습니다: $BUILT"
 
+# ── 안정적 신원으로 재서명 ────────────────────────────────────────────────────
+#
+# Xcode 기본 서명은 ad-hoc("Sign to Run Locally")이라 designated requirement 가 cdhash 다.
+# 재빌드하면 다른 신원이 되어 코드 신원에 묶인 상태(로그인 항목 등록 등)가 초기화된다.
+# 인증서가 있으면 그걸로 다시 서명해 신원을 고정한다. 없으면 ad-hoc 그대로 둔다.
+#
+# Hardened Runtime 은 켜지 않는다 — 로컬 설치에는 필요 없고, 배포용(package.sh)에서만
+# 공증 요건으로 켠다.
+# shellcheck source=signing.sh
+source "$(cd "$(dirname "$0")" && pwd)/signing.sh"
+resolve_signing_identity
+
+if [ -n "$SIGN_ID" ]; then
+    echo "==> 재서명: $SIGN_ID"
+    ENTITLEMENTS="$PROJECT_DIR/ClaudeUsageWidget/ClaudeUsageWidget.entitlements"
+    # 안쪽(익스텐션)부터 서명하고 바깥 앱을 마지막에 서명한다.
+    while IFS= read -r appex; do
+        [ -n "$appex" ] || continue
+        echo "    $(basename "$appex")"
+        codesign --force --timestamp=none \
+                 --entitlements "$ENTITLEMENTS" \
+                 --sign "$SIGN_ID" "$appex" 2>/dev/null \
+            || die "익스텐션 서명 실패: $appex"
+    done < <(find "$BUILT/Contents/PlugIns" -maxdepth 1 -name "*.appex" 2>/dev/null)
+
+    echo "    $APP_NAME"
+    codesign --force --timestamp=none --sign "$SIGN_ID" "$BUILT" 2>/dev/null \
+        || die "앱 서명 실패"
+    codesign --verify --deep --strict "$BUILT" 2>/dev/null \
+        || die "서명 검증 실패"
+else
+    echo "==> 재서명: 건너뜀 (코드 서명 인증서가 없습니다 — ad-hoc 유지)"
+    echo "    재빌드마다 코드 신원이 바뀌어, 로그인 항목 등록이 풀릴 수 있습니다."
+fi
+
 echo "==> 실행 중인 이전 버전 종료"
 # 이전 버전이 떠 있으면 위젯이 낡은 번들을 붙잡고 있게 된다.
 osascript -e 'quit app "ClaudeUsageWidgetApp"' 2>/dev/null || true
@@ -95,7 +130,7 @@ sleep 2
 if pgrep -f "$DEST/Contents/MacOS/ClaudeUsageWidgetApp" > /dev/null; then
     echo
     echo "설치 완료. 메뉴바에 아이콘이 나타났습니다."
-    echo "  · 실측 사용량: 첫 조회 때 키체인 접근 허용 창이 뜨면 «항상 허용» 을 누르세요"
+    echo "  · 실측 사용량: 메뉴바 → ⚙︎ 설정 → 실측 사용량 (claude.ai) → «Claude 로그인»"
     echo "  · 로그인 시 자동 실행: 메뉴바 → 한도 설정 → 실행"
     echo "  · 위젯 추가: 데스크톱 우클릭 → 위젯 편집 → \"Claude Code 사용량\""
 else

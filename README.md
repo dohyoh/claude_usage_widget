@@ -8,8 +8,8 @@ macOS 메뉴바와 알림센터 위젯에서 **Claude 사용량**(5시간 한도
 
 두 개의 데이터 소스를 씁니다:
 
-1. **claude.ai 실측 (기본·권장)** — Claude 데스크톱 앱의 로그인 쿠키를 **Claude Safe Storage 키**로 복호화해 `claude.ai`에서 서버가 계산한 **실제 소진율(%)** 과 정확한 리셋 시각을 가져옵니다. `/usage`가 보여주는 값과 같고, Claude Code·데스크톱·웹을 모두 포함한 **계정 전체** 사용량입니다.
-2. **로컬 로그 추정 (폴백·상세)** — `~/.claude` 세션 로그를 파싱해 토큰·비용·모델별 분해를 만듭니다. 실측을 못 가져올 때(데스크톱 앱 미설치/미로그인)의 대체 표시이자, 서버가 주지 않는 토큰 상세의 출처입니다.
+1. **claude.ai 실측 (기본·권장)** — 앱 안의 로그인 창에서 `claude.ai`에 로그인하면 서버가 계산한 **실제 소진율(%)** 과 정확한 리셋 시각을 가져옵니다. `/usage`가 보여주는 값과 같고, Claude Code·데스크톱·웹을 모두 포함한 **그 계정 전체** 사용량입니다.
+2. **로컬 로그 추정 (폴백·상세)** — `~/.claude` 세션 로그를 파싱해 토큰·비용·모델별 분해를 만듭니다. 실측을 못 가져올 때(미로그인·세션 만료)의 대체 표시이자, 서버가 주지 않는 토큰 상세의 출처입니다. 이 로그는 늘 **Claude Code 계정**의 활동이므로, 연동 계정이 다르면 설정에서 경고합니다.
 
 ---
 
@@ -22,28 +22,30 @@ macOS 메뉴바와 알림센터 위젯에서 **Claude 사용량**(5시간 한도
 
 ---
 
-## 🔓 실측 사용량 — Claude Safe Storage로 계정 전체 사용량 불러오기
+## 🔓 실측 사용량 — 자체 로그인으로 계정 전체 사용량 불러오기
 
-Claude 데스크톱 앱(Electron)은 Chromium과 같은 방식으로 로그인 쿠키를 암호화해 저장합니다. 그 암호화 키가 macOS 키체인의 **`Claude Safe Storage`** 항목입니다. 이 키로 쿠키를 풀어 `claude.ai` API에 그대로 붙으면 서버가 계산한 실제 사용량을 받을 수 있습니다.
+앱 안의 로그인 창(`WKWebView`)에서 `claude.ai`에 직접 로그인하고, 그 세션으로 서버가 계산한 실제 사용량을 받아옵니다. **Claude 데스크톱 앱이 필요하지 않고, 키체인도 쓰지 않습니다.**
 
-### 복호화 절차
+### 세션 확보
 
 ```
-1. 키체인:  security 항목 "Claude Safe Storage" / "Claude Key"  →  base64 문자열 키(24바이트)
-2. 키 유도: PBKDF2-HMAC-SHA1(key, salt="saltysalt", 반복 1003회, 16바이트)
-3. 복호화:  AES-128-CBC, IV = 공백 16바이트
-            대상은 Cookies DB의 encrypted_value 에서 "v10"/"v11" 3바이트 접두사를 뺀 본문
-4. 접두사:  최신 Chromium은 평문 앞에 sha256(host_key) 32바이트를 붙인다 → 있으면 떼어낸다
+1. 설정 → 실측 사용량 (claude.ai) → «Claude 로그인»
+2. 앱 안의 로그인 창에서 사용자가 직접 로그인 (이메일 코드 / Google SSO)
+3. 세션 쿠키가 생기면 창이 자동으로 닫힌다
+4. 세션은 WKWebsiteDataStore(persistent)에 남아 앱을 다시 켜도 유지된다 (대략 4주)
 ```
 
-- 쿠키 DB: `~/Library/Application Support/Claude/Cookies` (SQLite). 잠금·WAL 문제를 피하려고 임시 사본을 떠서 읽습니다.
-- 필요한 쿠키: `sessionKey`(로그인 세션), `lastActiveOrg`(조직 UUID). 실제로는 `claude.ai` 도메인 쿠키 전체를 브라우저처럼 함께 보냅니다(`cf_clearance` 등 포함).
+- 앱은 세션 값을 **어디에도 복사하지 않습니다.** WebKit 저장소에 그대로 두고 조회할 때 쿠키를 읽습니다.
+- 로그인 창과 조회가 **같은 저장소**를 쓰므로 `cf_clearance`·UA가 일관됩니다. 쿠키만 뽑아 다른 클라이언트로 옮기면 Cloudflare 챌린지를 받을 수 있습니다.
+- 필요한 쿠키: `sessionKey`(로그인 세션), `lastActiveOrg`(조직 UUID). 실제로는 `claude.ai` 도메인 쿠키 전체를 브라우저처럼 함께 보냅니다. **다른 도메인(Google·hCaptcha) 쿠키는 걸러냅니다** — SSO 왕복에서 같은 저장소에 함께 쌓이므로 필터가 없으면 남의 도메인 자격증명이 `claude.ai` 요청에 실려 나갑니다.
+- **Google 로그인은 팝업으로 진행됩니다.** `WKUIDelegate.createWebViewWith`를 구현하지 않으면 `WKWebView`가 `window.open`을 조용히 버리고 SSO가 콜백을 받지 못해 "로그인 중 오류"로 끝납니다. 구현하면 `accounts.google.com` 왕복이 정상 완주합니다 — `disallowed_useragent` 차단은 없고 UA를 바꿀 필요도 없습니다(기본 Safari 계열로 확인).
+- 팝업 창을 배열에 들고 있는 상태에서 `close()`를 부르면 과다 해제로 죽습니다. `NSWindow.isReleasedWhenClosed = false` 가 필요하고, `webViewDidClose` 는 WebKit 이 그 웹뷰를 아직 쓰는 중에 오므로 창 정리를 다음 런루프로 미뤄야 합니다.
 
 ### 사용량 API
 
 ```
 GET https://claude.ai/api/organizations/{org_uuid}/usage
-Cookie: <복호화한 claude.ai 쿠키 전체>
+Cookie: <웹뷰 저장소의 claude.ai 쿠키 전체>
 ```
 
 ```jsonc
@@ -55,18 +57,50 @@ Cookie: <복호화한 claude.ai 쿠키 전체>
 }
 ```
 
-조직은 쿠키의 `lastActiveOrg`를 먼저 쓰고, 실패하면 `/api/organizations`에서 `chat` 권한을 가진 구독 조직으로 다시 시도합니다.
+### 어느 계정·어느 조직을 볼지
+
+한 로그인이 여러 조직에 속할 수 있고(개인 Pro + 팀 시트), 어느 조직을 보느냐에 따라 숫자가 달라집니다. 실제 계정에서 관측된 배치입니다(이름은 가명):
+
+| 순서 | 이름 | capabilities |
+|---|---|---|
+| 1 | 개인 조직 | `api`, `api_individual` |
+| 2 | 팀 조직 | **`chat`**, `raven` |
+
+`chat` 권한이 없는 조직이 목록의 **첫 번째**입니다. 그래서 "첫 조직"을 쓰면 사용량 한도가 없는 조직을 잡습니다. 선택 규칙은 이렇습니다.
+
+```
+1. 설정에서 고른 조직이 목록에 있으면 그것
+2. 없으면 쿠키의 lastActiveOrg
+3. 없으면 chat 권한이 있는 첫 조직
+4. 없으면 목록의 첫 조직
+```
+
+고른 조직이 목록에서 사라지면(탈퇴·계정 변경) 자동 선택으로 내려가되 **그 사실을 알립니다** — 조용히 다른 조직 숫자를 사용자 것으로 보여주지 않습니다. 여러 조직이 있으면 설정에 **조직** 선택이 나타납니다.
+
+**로컬 추정과 계정이 다를 수 있습니다.** 로컬 추정은 늘 `~/.claude/projects` 로그, 즉 **Claude Code 계정**의 활동입니다. 연동 계정이 그와 다르면 설정에 경고가 붙습니다.
+
+두 쪽을 이렇게 알아냅니다.
+
+| 쪽 | 출처 | 비용 |
+|---|---|---|
+| Claude Code 계정 | `~/.claude.json` 의 `oauthAccount` | 인증 불필요, 파일 읽기 |
+| 연동 계정 | `GET /api/account` → `email_address` | 로그인·조직이 **바뀔 때만** 1회 |
+
+이메일까지 비교하는 이유는 **조직 UUID가 같아도 계정은 다를 수 있기** 때문입니다 — 같은 팀 조직의 다른 멤버로 로그인한 경우입니다. 이메일을 못 얻으면 조직 단위 비교로 자동 축소됩니다.
+
+계정 정보는 `~/.claude/.usage-widget-account.json` 에 캐시하고, **세션 지문이 바뀌거나 조직이 바뀔 때만** 다시 조회합니다. 지문은 세션 쿠키의 sha256 앞 16자이고, 쿠키 원본은 저장하지 않습니다.
 
 ### 경계·프라이버시
 
-- **키체인 접근 허용 창**: 이 항목은 Claude 데스크톱 앱이 만든 것이라, 이 앱이 처음 읽을 때 macOS가 표준 허용 창을 띄웁니다. **"항상 허용"** 을 누르면 이후엔 조용히 읽습니다. ad-hoc 서명이라 앱을 다시 빌드하면 서명이 바뀌어 창이 다시 뜰 수 있습니다.
-- **샌드박스**: 키체인·쿠키 파일·네트워크는 샌드박스가 꺼진 **메뉴바 앱**만 접근할 수 있습니다. 위젯(샌드박스 ON)은 이 조회를 직접 하지 못하고, 메뉴바 앱이 스냅샷에 넣어 준 실측 %를 읽기만 합니다.
-- **Safe Storage 키는 한 번만 읽습니다**: 이 키는 바뀌지 않으므로 **앱 실행당 처음 한 번** 키체인에서 읽어 메모리에 캐시하고, 이후 조회는 캐시된 키로 쿠키만 다시 풉니다(쿠키는 회전할 수 있어 파일은 매번 읽음). 키가 무효화되면(키 교체 등) 자동으로 한 번 더 읽습니다.
+- **키체인을 쓰지 않습니다**: 비밀번호 프롬프트가 뜨지 않습니다. 이전에는 Claude 데스크톱 앱이 만든 `Claude Safe Storage` 항목을 읽었고, ad-hoc 서명 때문에 재빌드마다 허용 창이 다시 떴습니다.
+- **샌드박스**: 웹뷰·네트워크는 샌드박스가 꺼진 **메뉴바 앱**만 씁니다. 위젯(샌드박스 ON)은 조회를 직접 하지 못하고, 메뉴바 앱이 스냅샷에 넣어 준 실측 %를 읽기만 합니다.
+- **세션은 어디에도 복사하지 않습니다**: WebKit 저장소에만 있고, 앱이 따로 저장하는 것은 **세션 지문(sha256 앞 16자)** 뿐입니다. 지문은 "로그인이 바뀌었는지" 판단에만 씁니다. 스냅샷에는 서버가 준 **백분율·리셋 시각**만 담깁니다.
+- **앱을 지우면 세션도 지웁니다**: `./uninstall.sh` 는 설정과 달리 `--purge` 없이도 웹 저장소를 지웁니다 — 앱을 지웠는데 로그인이 디스크에 남아 있으면 안 되기 때문입니다. Homebrew 는 `brew uninstall --zap` 을 쓰세요.
 - **조회 주기 설정**: 설정 → 실측 사용량 (claude.ai) → **갱신 주기** 에서 30초·1분(기본)·3분·5분·10분·30분·**수동** 중 고릅니다. '수동'은 앱 시작 때 1회만 가져오고 이후엔 패널의 새로고침 버튼으로만 갱신합니다.
-- **비밀은 저장하지 않습니다**: 키·세션 쿠키는 메모리에서만 다루고 디스크에 쓰지 않습니다. 스냅샷에는 복호화 결과가 아니라 서버가 준 **백분율·리셋 시각**만 담깁니다.
+- **세션이 만료되면**(401/403) 다시 로그인하라고 알립니다. 429·5xx 는 일시적 실패로 보고 재로그인을 요구하지 않습니다 — 멀쩡한 세션을 버리게 만들면 안 됩니다.
 - 조회를 원치 않으면 **설정 → 실측 사용량 (claude.ai)** 토글로 끌 수 있습니다. 끄면 아래의 로컬 추정만 씁니다.
 
-관련 코드: [ClaudeServerUsage.swift](ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeServerUsage.swift)
+관련 코드: [ClaudeServerUsage.swift](ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeServerUsage.swift) · [ClaudeLoginWindow.swift](ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeLoginWindow.swift) · [ClaudeWebSession.swift](ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeWebSession.swift) · [OrganizationChoice.swift](ClaudeUsageWidgetApp/Shared/OrganizationChoice.swift)
 
 ---
 
@@ -149,7 +183,7 @@ Claude Code는 대화 컨텍스트를 매 요청 캐시에서 다시 읽기 때�
 
 **로컬 추정에는 Claude 데스크톱 앱 / claude.ai 사용량이 포함되지 않습니다.** 그쪽 소비량은 서버에만 있고 로컬 로그가 없습니다. 캘리브레이션 후에도 Claude가 계속 더 높은 값을 보여준다면, 그 차이가 데스크톱/웹에서 쓴 몫입니다.
 
-> 이 한계는 **실측 사용량(claude.ai)** 을 켜면 사라집니다. 서버 값은 계정 전체(코드·데스크톱·웹)를 포함하기 때문입니다. 로컬 로그를 파싱한 이유도 원래는 서버 한도 정보가 로컬에 없어서였습니다 — `~/.claude/policy-limits.json` 에는 한도가 없고, 세션 로그의 `error.rateLimits` 는 모두 `null` 입니다. Safe Storage 방식은 그 서버 값을 직접 가져와 이 공백을 메웁니다.
+> 이 한계는 **실측 사용량(claude.ai)** 을 켜면 사라집니다. 서버 값은 계정 전체(코드·데스크톱·웹)를 포함하기 때문입니다. 로컬 로그를 파싱한 이유도 원래는 서버 한도 정보가 로컬에 없어서였습니다 — `~/.claude/policy-limits.json` 에는 한도가 없고, 세션 로그의 `error.rateLimits` 는 모두 `null` 입니다. 자체 로그인 방식은 그 서버 값을 직접 가져와 이 공백을 메웁니다.
 
 ---
 
@@ -175,7 +209,9 @@ ClaudeUsageWidgetApp/
 ├── ClaudeUsageWidgetApp/            # 메뉴바 앱 타겟 (샌드박스 OFF)
 │   ├── ClaudeUsageWidgetAppApp.swift  # MenuBarExtra + Settings 씬
 │   ├── UsageMonitor.swift             # 5초 로컬 + 60초 서버 조회, 스냅샷 발행
-│   ├── ClaudeServerUsage.swift        # Safe Storage 복호화 + claude.ai 실측 조회
+│   ├── ClaudeServerUsage.swift        # claude.ai 실측 조회 (조직 선택·실패 분류 배선)
+│   ├── ClaudeLoginWindow.swift        # 자체 로그인 창 (WKWebView + Google SSO 팝업)
+│   ├── ClaudeWebSession.swift         # WKWebsiteDataStore 의 claude.ai 쿠키 읽기
 │   ├── MenuBarIcon.swift              # 메뉴바 링·막대 아이콘 렌더링 (AppKit)
 │   ├── UsagePanel.swift               # 메뉴바 팝오버 UI
 │   └── UsageSettingsView.swift        # 디자인 고르기 + 실측 토글 + 추정 한도 설정
@@ -193,7 +229,7 @@ ClaudeUsageWidgetApp/
 
 | 타겟 | 샌드박스 | 접근 방식 |
 |------|----------|-----------|
-| 메뉴바 앱 | OFF (`ENABLE_APP_SANDBOX = NO`) | `~/.claude` 직접 읽기, 스냅샷 쓰기, **키체인(Safe Storage) · `~/Library/Application Support/Claude/Cookies` · claude.ai 네트워크** |
+| 메뉴바 앱 | OFF (`ENABLE_APP_SANDBOX = NO`) | `~/.claude` 직접 읽기, 스냅샷 쓰기, **로그인 웹뷰 · claude.ai 네트워크**. 키체인은 쓰지 않습니다 |
 | 위젯 익스텐션 | ON | entitlement의 읽기 전용 예외로 `~/.claude` 접근 (실측 조회는 불가 → 스냅샷의 서버 값만 읽음) |
 
 위젯 entitlement:
@@ -275,7 +311,7 @@ ClaudeUsageWidgetApp/
 |------|------|------|
 | macOS | **15.0 이상** | `MACOSX_DEPLOYMENT_TARGET` 기준. 낮으면 스크립트가 먼저 알려 줍니다 |
 | Xcode | 16 이상 | **Command Line Tools 만으로는 안 됩니다** — WidgetKit 익스텐션 타겟이 있어 Xcode 본체가 필요합니다. (개발·검증은 26.6에서 했습니다) |
-| Claude 데스크톱 앱 | (선택) | 실측 사용량을 쓰려면 설치·로그인돼 있어야 합니다 |
+| Claude 계정 | (선택) | 실측 사용량을 쓰려면 설정에서 «Claude 로그인» 을 눌러 로그인합니다. Claude 데스크톱 앱은 필요하지 않습니다 |
 
 ### 설치
 
@@ -296,7 +332,7 @@ cd claude-usage-widget
 
 코드를 수정하거나 `git pull` 한 뒤에는 `./install.sh` 를 다시 실행하면 됩니다.
 
-> **첫 실행 시 키체인 접근 허용 창**이 뜹니다 — 실측 사용량을 위해 Claude 데스크톱 앱이 만든 Safe Storage 키를 읽기 때문입니다. **«항상 허용»** 을 누르세요. 이 프로젝트는 ad-hoc 서명이라 재빌드하면 서명 해시가 바뀌어 다시 물어볼 수 있습니다 (자세한 배경은 위 [실측 사용량](#-실측-사용량--claude-safe-storage로-계정-전체-사용량-불러오기) 절).
+> 실측 사용량을 쓰려면 **설정 → 실측 사용량 (claude.ai) → «Claude 로그인»** 을 눌러 앱 안의 창에서 로그인하세요. 키체인 접근 허용 창은 뜨지 않습니다 (자세한 배경은 위 [실측 사용량](#-실측-사용량--자체-로그인으로-계정-전체-사용량-불러오기) 절).
 
 ### 로그인 시 자동 실행
 
@@ -385,11 +421,26 @@ DMG 는 `assets/` 가 있으면 **창 배경·볼륨 아이콘·아이콘 배치
 
 작은 크기(16·32px)는 축소만 하지 않고 **반짝임을 빼고 링을 굵게** 그린 별도 변형을 씁니다 — 그대로 줄이면 두 요소가 뭉개져 무엇인지 읽히지 않습니다.
 
+`install.sh` 와 `package.sh` 는 [signing.sh](signing.sh) 의 같은 규칙으로 자격을 찾습니다.
+
+```
+1. Developer ID Application  — 배포용. 공증까지 갈 수 있는 유일한 자격
+2. Apple Development         — 무료 계정으로도 발급된다. 공증은 못 하지만 신원은 안정된다
+3. 없으면 ad-hoc
+```
+
 | 보유 자격 | 하는 일 | 받는 사람 경험 |
 |---|---|---|
-| 없음 (현재) | ad-hoc 서명 그대로 DMG | Gatekeeper 우회 필요 — Cask `caveats` 에 안내가 자동 포함됨 |
+| 없음 | ad-hoc 서명 그대로 DMG | Gatekeeper 우회 필요 — Cask `caveats` 에 안내가 자동 포함됨 |
+| Apple Development (현재) | 서명 + Hardened Runtime. **코드 신원이 안정됨** | 그대로 — 공증이 없으므로 Gatekeeper 우회 필요 |
 | Developer ID 인증서 | 서명 + Hardened Runtime | 여전히 공증 경고 |
 | + 공증 프로필 | 공증(notarize) + 스테이플 | **경고 없이 바로 실행** |
+
+`SIGN_ID` 환경변수로 직접 지정할 수도 있습니다. Apple Development 로 서명한 빌드는 공증할 수 없으므로, `NOTARY_PROFILE` 을 줬더라도 공증 단계를 건너뜁니다 — 올려서 거부당하게 두지 않습니다.
+
+> **Hardened Runtime 과 WKWebView** — 인증서로 서명하면 `package.sh` 가 Hardened Runtime 을 켭니다. 그 아래에서도 로그인 창이 정상 동작합니다(패키징한 DMG 로 확인). WKWebView 의 웹 콘텐츠는 Apple 이 서명한 별도 XPC 프로세스(`com.apple.WebKit.WebContent`)에서 돌아가므로, JavaScriptCore 의 JIT 이 우리 앱의 런타임 제한을 받지 않습니다. `com.apple.security.cs.allow-jit` 같은 예외는 필요하지 않습니다.
+>
+> `install.sh` 는 Hardened Runtime 을 켜지 않습니다 — 로컬 설치에 필요하지 않고, 공증 요건인 배포용에서만 켭니다.
 
 ```bash
 # 유료 가입 후 — 인증서는 자동 감지되고, 공증만 프로필을 지정합니다
@@ -407,7 +458,27 @@ xattr -dr com.apple.quarantine /Applications/ClaudeUsageWidgetApp.app
 
 > `spctl -a` 는 이 앱을 항상 `rejected` 로 판정합니다(ad-hoc 서명이므로). 하지만 그건 **정책 평가 결과**이고 실행 차단과 다릅니다 — Gatekeeper 가 실제로 막는 것은 **quarantine 속성이 붙어 있을 때**뿐이라, 위 명령이면 정상 실행됩니다. 직접 빌드해 설치하는 경우(`./install.sh`)는 애초에 quarantine 이 붙지 않아 아무 조치가 필요 없습니다.
 
-또한 ad-hoc 서명은 재빌드마다 서명 해시가 바뀌어, **업데이트할 때마다 키체인 접근 허용 창이 다시 뜹니다.** Developer ID 로 서명하면 팀 ID 기준으로 서명이 안정되어 «항상 허용» 이 업데이트 후에도 유지됩니다.
+### ad-hoc 서명이 왜 문제인가
+
+ad-hoc 서명의 designated requirement 는 `cdhash` 하나입니다.
+
+```
+designated => cdhash H"cb541b976398ed6fffff04c493c2f082d385c341"
+```
+
+바이너리가 1비트만 바뀌어도 **다른 신원**이 됩니다. 그러면 코드 신원에 묶인 상태 — 로그인 항목 등록(`SMAppService`), TCC 허용 — 가 재빌드마다 초기화됩니다. 인증서로 서명하면 DR 이 이렇게 바뀝니다.
+
+```
+designated => identifier "sdh.ClaudeUsageWidgetApp" and anchor apple generic
+  and certificate leaf[subject.CN] = "Apple Development: … (TEAMID)"
+  and certificate 1[field.1.2.840.113635.100.6.2.1]
+```
+
+`cdhash` 가 없으므로 바이너리가 바뀌어도 같은 신원입니다. 인증서를 갱신해도 CN 이 같으면 그대로 유지됩니다.
+
+> 예전에는 이 문제가 훨씬 크게 나타났습니다. 실측 사용량을 위해 키체인의 `Claude Safe Storage` 를 읽던 시절에는 **업데이트마다 키체인 허용 창이 다시 떴습니다.** 자체 로그인으로 바꿔 키체인을 쓰지 않게 되면서 그 증상은 사라졌고, 남은 이득은 로그인 항목·TCC 상태의 안정성입니다.
+>
+> 서명 주체를 바꾸면 DR 이 달라지므로 **전환 직후 한 번은** 기존에 부여된 상태가 초기화됩니다. 그 뒤로는 안정됩니다.
 
 ### Homebrew 로 배포하기
 

@@ -40,6 +40,15 @@ struct UsageConfig: Codable, Hashable, Sendable {
     /// 이전 버전 호환을 위해 Optional. 실제 값은 `serverRefreshInterval`을 쓴다.
     var serverRefreshSeconds: Int?
 
+    /// 실측 사용량을 조회할 organization UUID. nil이면 자동으로 고른다.
+    ///
+    /// 한 로그인이 여러 조직에 속할 수 있고(개인 Pro + 팀 시트), 어느 조직을 보느냐에 따라
+    /// 숫자가 달라진다. 자동 선택은 조직 목록의 순서에 의존해 엉뚱한 조직을 잡을 수 있으므로
+    /// 사용자가 직접 지정할 수 있게 둔다. 실제 선택은 `OrganizationChoice.select`가 한다.
+    ///
+    /// 이전 버전 설정 파일에 이 키가 없어도 디코딩이 깨지지 않게 Optional로 둔다.
+    var organizationUuid: String?
+
     /// 메뉴바 라벨에 주간 소진율을 함께 표시할지. nil = 꺼짐.
     ///
     /// 메뉴바는 폭이 곧 다른 앱의 자리라 기본은 5시간 창 하나만 둔다. 이전 버전 설정
@@ -199,7 +208,15 @@ enum UsageSharedStore {
     // MARK: - Config
 
     static func loadConfig() -> UsageConfig {
-        guard let data = try? Data(contentsOf: configURL),
+        loadConfig(from: configURL)
+    }
+
+    /// 지정한 파일에서 설정을 읽는다. 못 읽거나 형식이 어긋나면 기본값을 준다.
+    ///
+    /// 경로를 받는 형태로 열어 둬 테스트가 실제 사용자 파일을 건드리지 않고, 프로덕션과
+    /// **같은 디코더 구성**(iso8601 날짜)으로 하위 호환을 검증할 수 있다.
+    static func loadConfig(from url: URL) -> UsageConfig {
+        guard let data = try? Data(contentsOf: url),
               let config = try? decoder.decode(UsageConfig.self, from: data)
         else { return .default }
         return config
@@ -209,6 +226,36 @@ enum UsageSharedStore {
     static func save(_ config: UsageConfig) -> Bool {
         guard let data = try? encoder.encode(config) else { return false }
         return writeAtomically(data, to: configURL)
+    }
+
+    // MARK: - Account
+
+    /// 실측을 가져온 계정 캐시. 설정과 수명주기가 달라 파일을 따로 둔다.
+    static var accountURL: URL {
+        ClaudeUsageReader.defaultClaudeHome.appendingPathComponent(".usage-widget-account.json")
+    }
+
+    static func loadAccount() -> AccountCache? {
+        loadAccount(from: accountURL)
+    }
+
+    /// 지정한 파일에서 계정 캐시를 읽는다. 파일이 없거나 형식이 어긋나면 nil.
+    ///
+    /// 설정과 달리 기본값이 없다 — 캐시가 없으면 "아직 모른다"이고, 그때는 다시 조회한다.
+    static func loadAccount(from url: URL) -> AccountCache? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? decoder.decode(AccountCache.self, from: data)
+    }
+
+    @discardableResult
+    static func save(_ account: AccountCache) -> Bool {
+        save(account, to: accountURL)
+    }
+
+    @discardableResult
+    static func save(_ account: AccountCache, to url: URL) -> Bool {
+        guard let data = try? encoder.encode(account) else { return false }
+        return writeAtomically(data, to: url)
     }
 
     // MARK: - Helpers

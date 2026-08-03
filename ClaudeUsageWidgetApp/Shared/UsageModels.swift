@@ -164,8 +164,8 @@ struct ServerUsageWindow: Codable, Hashable, Sendable {
 
 /// claude.ai `/api/organizations/{org}/usage` 응답에서 뽑은 실측 사용량.
 ///
-/// Claude 데스크톱 앱의 로그인 쿠키(Safe Storage로 복호화)로 조회하므로,
-/// Claude Code·데스크톱·웹을 모두 포함한 **계정 전체** 사용량이다.
+/// 앱이 자체 로그인 창으로 확보한 세션으로 조회하므로, Claude Code·데스크톱·웹을 모두
+/// 포함한 **그 계정 전체** 사용량이다.
 struct ServerUsage: Codable, Hashable, Sendable {
     /// 이 값을 서버에서 가져온 시각. 신선도 판단에 쓴다.
     var fetchedAt: Date
@@ -179,6 +179,12 @@ struct ServerUsage: Codable, Hashable, Sendable {
     var organizationName: String?
     /// 조회 실패 시 사용자에게 보여줄 메시지. 성공이면 nil.
     var failureReason: String?
+    /// 설정에서 고른 조직을 찾을 수 없어 다른 조직으로 조회했을 때의 알림.
+    ///
+    /// 조회 자체는 성공했으므로 `failureReason`이 아니다. 다만 사용자가 지정한 것과 다른
+    /// 조직의 숫자이므로 조용히 넘기지 않는다. 이전 버전 스냅샷에 이 키가 없어도 디코딩이
+    /// 깨지지 않게 Optional 로 둔다.
+    var fallbackNotice: String?
 
     /// 표시 가능한 실측 데이터가 있는지.
     var isUsable: Bool { failureReason == nil && (fiveHour != nil || sevenDay != nil) }

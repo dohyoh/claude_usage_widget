@@ -18,3 +18,6 @@ ClaudeUsageWidgetApp/.build/
 # 배포 산출물
 dist/
 ClaudeUsageWidgetApp/.build-dist/
+
+# 테스트 산출물
+ClaudeUsageWidgetApp/.build-test/
