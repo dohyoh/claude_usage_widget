@@ -14,6 +14,22 @@ struct OrganizationSummary: Equatable, Sendable {
     let name: String?
     /// 조직이 가진 권한. 사용량 한도를 갖는 구독 조직은 `chat`을 포함한다.
     let capabilities: [String]
+
+    /// `/api/organizations` 응답을 파싱한다. 형식이 어긋나면 nil.
+    ///
+    /// 응답에는 우리가 쓰지 않는 필드가 많고 앞으로 더 생길 수 있다. 관심 있는 키만 꺼낸다.
+    static func list(fromJSON data: Data) -> [OrganizationSummary]? {
+        struct Response: Decodable {
+            let uuid: String
+            let name: String?
+            // 권한 필드가 빠진 조직 하나 때문에 목록 전체를 잃지 않도록 Optional 로 둔다.
+            let capabilities: [String]?
+        }
+        guard let decoded = try? JSONDecoder().decode([Response].self, from: data) else { return nil }
+        return decoded.map {
+            OrganizationSummary(uuid: $0.uuid, name: $0.name, capabilities: $0.capabilities ?? [])
+        }
+    }
 }
 
 enum OrganizationChoice {
