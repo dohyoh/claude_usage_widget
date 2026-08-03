@@ -43,13 +43,35 @@ final class UsageMonitor {
     private var lastServerUsage: ServerUsage?
     private var lastServerFetch: Date = .distantPast
     private var serverFetchInFlight = false
-    /// Safe Storage 복호화 키. 처음 한 번만 키체인에서 읽어 캐시하고 이후 조회에서 재사용한다.
-    /// 메모리에만 두고 디스크에 쓰지 않는다.
-    private var cachedDecryptionKey: Data?
+    /// 실측을 가져온 계정. 매 조회마다 다시 확인하지 않고 파일에 캐시한다.
+    private(set) var serverAccount: AccountCache?
+    /// Claude Code 가 로그인해 둔 계정 — 로컬 추정이 누구의 활동인지 알려준다.
+    ///
+    /// 5초 갱신마다 읽으면 50KB 넘는 파일을 계속 파싱하게 되므로 시작할 때와 수동
+    /// 새로고침에서만 읽는다. Claude Code 계정이 바뀌는 일은 드물다.
+    private(set) var localAccount: ClaudeCodeAccount?
 
     init() {
         self.config = UsageSharedStore.loadConfig()
+        self.serverAccount = UsageSharedStore.loadAccount()
+        self.localAccount = ClaudeCodeAccount.read()
         start()
+    }
+
+    /// 이 로그인이 볼 수 있는 조직 — 설정의 조직 선택이 쓴다.
+    private(set) var availableOrganizations: [OrganizationSummary] = []
+
+    /// 실측 계정과 로컬 추정 계정이 같은지. 다르면 패널의 두 숫자가 다른 계정을 가리킨다.
+    var accountMatch: AccountMatch {
+        AccountMatch.evaluate(server: serverAccount, local: localAccount)
+    }
+
+    /// 로그인 창을 띄운다. 세션을 확보하면 곧바로 다시 조회한다.
+    func signIn() {
+        ClaudeLoginWindowController.shared.present { [weak self] signedIn in
+            guard signedIn else { return }
+            self?.refreshAll()
+        }
     }
 
     func start() {
@@ -80,8 +102,22 @@ final class UsageMonitor {
 
     /// 메뉴의 "새로 고침"에서 서버까지 강제로 다시 가져온다.
     func refreshAll() {
+        localAccount = ClaudeCodeAccount.read()
         maybeFetchServer(force: true)
         refresh()
+    }
+
+    /// 연동을 끊는다 — 웹 저장소를 비우고 계정 캐시를 지운다.
+    ///
+    /// 다음 조회는 재로그인을 요구한다. 다른 계정으로 갈아끼울 때 쓴다.
+    func signOut() {
+        Task { @MainActor [weak self] in
+            await ClaudeWebSession.signOut()
+            guard let self else { return }
+            self.serverAccount = nil
+            self.lastServerUsage = nil
+            self.refresh()
+        }
     }
 
     // MARK: - 서버(claude.ai) 실측 조회
@@ -109,18 +145,26 @@ final class UsageMonitor {
         }
         serverFetchInFlight = true
         lastServerFetch = now
-        let cached = cachedDecryptionKey
+        let config = self.config
+        let cached = serverAccount
         Task { [weak self] in
-            let result = await ClaudeServerUsage.fetch(cachedKey: cached)
-            self?.applyServerUsage(result.usage, key: result.key)
+            let result = await ClaudeServerUsage.fetch(config: config, cachedAccount: cached)
+            self?.applyServerUsage(result)
         }
     }
 
     /// 조회 결과를 현재 스냅샷에 반영하고 저장·위젯 갱신한다. (MainActor)
-    private func applyServerUsage(_ usage: ServerUsage, key: Data?) {
+    private func applyServerUsage(_ result: ServerFetchResult) {
         serverFetchInFlight = false
-        // 키체인에서 유효한 키를 읽었으면 캐시해 다음부터 Safe Storage를 건드리지 않는다.
-        if let key { cachedDecryptionKey = key }
+        // 계정을 다시 확인했으면 캐시를 갈아 끼운다. 설정과 수명주기가 달라 파일이 따로 있다.
+        if let account = result.account {
+            serverAccount = account
+            UsageSharedStore.save(account)
+        }
+        // 조직 목록은 조회에 성공했을 때만 갈아 끼운다. 일시적 실패로 설정의 선택지를
+        // 비워 버리면 사용자가 고른 조직이 사라진 것처럼 보인다.
+        if !result.organizations.isEmpty { availableOrganizations = result.organizations }
+        let usage = result.usage
         lastServerUsage = usage
         guard config.showsServerUsage else { return }
         var updated = snapshot

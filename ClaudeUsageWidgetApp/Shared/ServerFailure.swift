@@ -10,7 +10,7 @@
 
 import Foundation
 
-enum ServerFailure: Equatable, Sendable {
+enum ServerFailure: Error, Equatable, Sendable {
     /// 세션이 만료·거부됐다. 다시 로그인해야 풀린다.
     case needsSignIn
     /// 일시적 실패(속도 제한·서버 오류). 기다리면 풀린다.

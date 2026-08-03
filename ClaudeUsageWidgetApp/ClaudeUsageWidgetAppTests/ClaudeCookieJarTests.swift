@@ -76,4 +76,20 @@ struct ClaudeCookieJarTests {
 
         #expect(jar.cookieHeader == "sessionKey=sk-ant-sid01-EXAMPLE")
     }
+
+    @Test("세션 지문을 jar 가 직접 준다 — 원시 세션 키는 내보내지 않는다")
+    func exposesSessionFingerprintWithoutLeakingKey() {
+        // 계정 캐시 무효화 판단에 지문이 필요하다. 그걸 위해 세션 키 자체를 꺼내 쓰면
+        // 자격증명이 코드 여러 곳을 돌아다닌다.
+        //
+        // 기대값은 AccountIdentityTests 와 같은 독립 계산이다:
+        //   printf '%s' 'sk-ant-sid01-EXAMPLE-SESSION-KEY' | shasum -a 256 | cut -c1-16
+        let signedIn = ClaudeCookieJar(cookies: [
+            Self.cookie("sessionKey", "sk-ant-sid01-EXAMPLE-SESSION-KEY"),
+        ])
+        #expect(signedIn.sessionFingerprint == "6f5cc43e4293b697")
+
+        let signedOut = ClaudeCookieJar(cookies: [Self.cookie("cf_clearance", "abc")])
+        #expect(signedOut.sessionFingerprint == nil)
+    }
 }

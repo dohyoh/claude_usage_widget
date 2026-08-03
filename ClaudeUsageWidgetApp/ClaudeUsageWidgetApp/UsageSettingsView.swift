@@ -105,6 +105,8 @@ struct UsageSettingsView: View {
                     set: { monitor.config.serverUsageEnabled = $0 }
                 ))
                 if config.showsServerUsage {
+                    account
+                    organizationPicker
                     Picker("갱신 주기", selection: Binding(
                         get: { config.serverRefreshSeconds ?? 60 },
                         set: { monitor.config.serverRefreshSeconds = $0 }
@@ -122,7 +124,7 @@ struct UsageSettingsView: View {
             } header: {
                 Text("실측 사용량 (claude.ai)")
             } footer: {
-                Text("Claude 데스크톱 앱의 로그인 쿠키를 Safe Storage 키로 복호화해 계정 전체(코드·데스크톱·웹) 실측 소진율을 가져옵니다. Safe Storage 키는 앱 실행당 한 번만 읽어 재사용하고, 위 주기마다 사용량만 다시 조회합니다. '수동'으로 두면 시작 때 1회만 가져오고 이후엔 패널의 새로고침 버튼으로 갱신합니다. 첫 조회 때 키체인 접근 허용 창이 뜹니다.")
+                Text("앱 안의 로그인 창에서 claude.ai에 로그인하면 그 계정 전체(코드·데스크톱·웹)의 실측 소진율을 가져옵니다. 세션은 앱의 웹 저장소에 남아 다시 켜도 유지되고, 만료되면(대략 4주) 다시 로그인하라고 알립니다. Claude 데스크톱 앱은 필요하지 않고, 키체인 접근 허용 창도 뜨지 않습니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -334,6 +336,65 @@ struct UsageSettingsView: View {
         ("주황", "#FF9F0A"),
     ]
 
+    /// 연동 계정 — 로그인 여부와 계정 표시, 계정 바꾸기.
+    @ViewBuilder private var account: some View {
+        if let server = monitor.serverAccount {
+            LabeledContent("연동 계정") {
+                HStack(spacing: 6) {
+                    Text(server.email ?? server.organizationName ?? "로그인됨")
+                        .lineLimit(1)
+                    Button("다른 계정") {
+                        monitor.signOut()
+                        monitor.signIn()
+                    }
+                    .buttonStyle(.link)
+                }
+            }
+            accountMismatch
+        } else {
+            LabeledContent("연동 계정") {
+                HStack(spacing: 6) {
+                    Text("로그인하지 않음").foregroundStyle(.secondary)
+                    Button("Claude 로그인") { monitor.signIn() }
+                }
+            }
+        }
+    }
+
+    /// 로컬 추정과 실측이 서로 다른 계정을 가리킬 때의 경고.
+    ///
+    /// 로컬 추정은 늘 Claude Code 로그(~/.claude/projects)를 세므로, 연동 계정과 Claude Code
+    /// 계정이 다르면 패널의 두 숫자가 다른 계정 것이 된다.
+    @ViewBuilder private var accountMismatch: some View {
+        switch monitor.accountMatch {
+        case .differentAccount, .differentOrganization:
+            let local = monitor.localAccount
+            let name = local?.email ?? local?.organizationName ?? "다른 계정"
+            Label("로컬 추정은 Claude Code 계정(\(name))의 로그입니다. 위 실측과 다른 계정이라 두 숫자를 같이 비교하면 안 됩니다.",
+                  systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        case .same, .unknown:
+            EmptyView()
+        }
+    }
+
+    /// 조직 선택. 한 로그인이 여러 조직에 속하면 어느 조직을 보느냐로 숫자가 달라진다.
+    @ViewBuilder private var organizationPicker: some View {
+        if monitor.availableOrganizations.count > 1 {
+            Picker("조직", selection: Binding(
+                get: { config.organizationUuid ?? "" },
+                set: { monitor.config.organizationUuid = $0.isEmpty ? nil : $0 }
+            )) {
+                Text("자동 (사용량 한도가 있는 조직)").tag("")
+                ForEach(monitor.availableOrganizations, id: \.uuid) { organization in
+                    Text(organization.name ?? organization.uuid).tag(organization.uuid)
+                }
+            }
+        }
+    }
+
     /// 실측 사용량 조회 상태 — 성공 시 %·조직·갱신 시각, 실패 시 사유.
     @ViewBuilder private var serverStatus: some View {
         if let server = monitor.snapshot.server {
@@ -343,6 +404,12 @@ struct UsageSettingsView: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             } else if server.isUsable {
+                if let notice = server.fallbackNotice {
+                    Label(notice, systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let five = server.fiveHour {
                     LabeledContent("5시간 창") {
                         Text("\(Int(five.utilizationPercent.rounded()))%").monospacedDigit()

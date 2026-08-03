@@ -18,6 +18,11 @@ struct ClaudeCookieJar: Sendable {
     let lastActiveOrg: String?
     /// 로그인 세션 쿠키가 있는지.
     let hasSession: Bool
+    /// 세션 쿠키의 지문. 로그인하지 않았으면 nil.
+    ///
+    /// 계정 캐시를 언제 버릴지 판단하는 데만 쓴다. 이 값을 jar 가 직접 주기 때문에 원시
+    /// 세션 키가 코드 여러 곳을 돌아다니지 않는다.
+    let sessionFingerprint: String?
 
     /// 로그인의 증거가 되는 쿠키 이름.
     ///
@@ -25,10 +30,12 @@ struct ClaudeCookieJar: Sendable {
     /// 로그인 여부를 알 수 없다.
     static let sessionCookieNames: Set<String> = ["sessionKey", "sessionKeyLC"]
 
-    init(cookieHeader: String, lastActiveOrg: String?, hasSession: Bool) {
+    init(cookieHeader: String, lastActiveOrg: String?, hasSession: Bool,
+         sessionFingerprint: String? = nil) {
         self.cookieHeader = cookieHeader
         self.lastActiveOrg = lastActiveOrg
         self.hasSession = hasSession
+        self.sessionFingerprint = sessionFingerprint
     }
 
     /// 웹뷰의 쿠키 저장소에서 받은 쿠키로 조립한다.
@@ -39,6 +46,9 @@ struct ClaudeCookieJar: Sendable {
         let claude = cookies.filter { $0.domain.hasSuffix("claude.ai") }
         cookieHeader = claude.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
         lastActiveOrg = claude.first { $0.name == "lastActiveOrg" }?.value
-        hasSession = claude.contains { Self.sessionCookieNames.contains($0.name) }
+
+        let session = claude.first { Self.sessionCookieNames.contains($0.name) }
+        hasSession = session != nil
+        sessionFingerprint = session.map { AccountIdentity.fingerprint(sessionKey: $0.value) }
     }
 }
