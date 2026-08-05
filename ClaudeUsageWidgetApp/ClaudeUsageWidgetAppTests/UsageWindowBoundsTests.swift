@@ -60,15 +60,11 @@ struct UsageWindowBoundsTests {
                                                        now.addingTimeInterval(-30 * 60)])
         defer { try? FileManager.default.removeItem(at: home) }
 
-        // 로그 휴리스틱은 4시간 전 첫 요청부터 창을 열어 셋을 다 센다.
-        let guessed = ClaudeUsageReader(claudeHome: home).makeSnapshot(now: now)
-        #expect(guessed.activeBlock?.requestCount == 3)
-
-        // 서버가 3시간 전 시작을 알려주면 그 뒤 둘만 이 창의 것이다.
         let start = now.addingTimeInterval(-3 * 3600)
         let measured = ClaudeUsageReader(claudeHome: home)
             .makeSnapshot(now: now, bounds: UsageWindowBounds(sessionStart: start))
 
+        // 4시간 전 요청은 지난 창의 것이다.
         #expect(measured.activeBlock?.requestCount == 2)
         #expect(measured.activeBlock?.startedAt == start)
     }
@@ -83,13 +79,9 @@ struct UsageWindowBoundsTests {
         // 주기가 이틀 전에 시작했다면 6일 전 요청은 지난 주기의 것이다.
         let bounds = UsageWindowBounds(weeklyStart: now.addingTimeInterval(-2 * 86_400))
         let measured = ClaudeUsageReader(claudeHome: home).makeSnapshot(now: now, bounds: bounds)
-        #expect(measured.weeklyTokens.output == Self.outputPerRequest)
 
-        // 같은 로그를 롤링 7일로 세면 지난 주기까지 섞여 두 배가 된다.
-        var rolling = UsageConfig.default
-        rolling.weeklyResetWeekday = nil
-        let mixed = ClaudeUsageReader(claudeHome: home).makeSnapshot(now: now, config: rolling)
-        #expect(mixed.weeklyTokens.output == Self.outputPerRequest * 2)
+        #expect(measured.weeklyTokens?.output == Self.outputPerRequest)
+        #expect(measured.weeklyTokensByModel?["claude-opus-5"] != nil)
     }
 
     @Test("주기 시작이 7일보다 앞이어도 집계 범위에서 잘리지 않는다")
@@ -103,7 +95,29 @@ struct UsageWindowBoundsTests {
         let bounds = UsageWindowBounds(weeklyStart: now.addingTimeInterval(-8 * 86_400))
         let measured = ClaudeUsageReader(claudeHome: home).makeSnapshot(now: now, bounds: bounds)
 
-        #expect(measured.weeklyTokens.output == Self.outputPerRequest)
+        #expect(measured.weeklyTokens?.output == Self.outputPerRequest)
+    }
+
+    // MARK: - 경계를 모르면 집계하지 않는다
+
+    @Test("경계를 모르는 창은 집계를 만들지 않는다 — 근사치를 대신 넣지 않는다")
+    func skipsAggregatesWithoutBounds() throws {
+        let now = Date()
+        // 자정 직후에 돌아도 «오늘»에 들어오도록 하루의 시작 이후로 붙인다.
+        let today = max(Calendar.current.startOfDay(for: now), now.addingTimeInterval(-30 * 60))
+        let home = try Self.claudeHome(withRequestsAt: [today])
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let measured = ClaudeUsageReader(claudeHome: home).makeSnapshot(now: now)
+
+        // 5시간 창도 주간 주기도 경계를 모른다 — 로그의 첫 요청 시각으로 추정하거나
+        // 롤링 7일로 근사하면 부정확한 숫자가 조용히 화면에 오른다.
+        #expect(measured.activeBlock == nil)
+        #expect(measured.weeklyTokens == nil)
+        #expect(measured.weeklyTokensByModel == nil)
+
+        // 오늘은 경계가 로컬 자정이라 서버와 무관하게 늘 정확하다.
+        #expect(measured.todayTokens.output > 0)
     }
 
     // MARK: - 도구

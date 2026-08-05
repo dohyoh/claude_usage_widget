@@ -4,9 +4,8 @@
 //
 //  메뉴바 아이콘을 눌렀을 때 열리는 패널.
 //
-//  claude.ai 실측 사용량(Safe Storage 쿠키로 조회)이 있으면 그 백분율을 주 표시로 쓰고,
-//  서버가 주지 않는 토큰·비용·모델별 분해는 로컬 로그에서 보완한다. 서버 조회가 실패하거나
-//  꺼져 있으면 기존의 로그 기반 추정 표시로 돌아간다.
+//  소진율(%)은 claude.ai 실측만 쓴다. 서버가 주지 않는 토큰·모델별 분해는 로컬 로그에서
+//  보완하되, 창 경계를 아는 창에만 존재한다 — 경계를 모르면 그 줄을 그리지 않는다.
 //
 
 import SwiftUI
@@ -19,7 +18,6 @@ struct UsagePanel: View {
     @State private var now = Date()
 
     private var snapshot: UsageSnapshot { monitor.snapshot }
-    private var config: UsageConfig { monitor.config }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -42,30 +40,17 @@ struct UsagePanel: View {
     // MARK: - 본문 분기
 
     @ViewBuilder private var content: some View {
+        if let server = snapshot.usableServerUsage {
+            serverSection(server)
+        } else {
+            serverUnavailable
+        }
+        Divider()
+        localBreakdown
+        modelSection
+        // 로컬 로그를 아예 읽지 못한 경우 — 상세가 왜 비었는지 알려준다.
         if let reason = snapshot.failureReason {
             failure(reason)
-        } else if let server = snapshot.usableServerUsage(config: config) {
-            serverSection(server)
-            Divider()
-            localBreakdown(snapshot.activeBlock)
-            if !snapshot.weeklyTokensByModel.isEmpty {
-                Divider()
-                modelSection
-            }
-        } else if let block = snapshot.activeBlock {
-            sessionSection(block)
-            Divider()
-            totalsSection
-            if !snapshot.weeklyTokensByModel.isEmpty {
-                Divider()
-                modelSection
-            }
-            serverFailureNote
-        } else {
-            idle
-            Divider()
-            totalsSection
-            serverFailureNote
         }
     }
 
@@ -173,131 +158,84 @@ struct UsagePanel: View {
                         size: .large)
     }
 
-    /// 서버가 주지 않는 토큰·비용·모델별 상세(로컬 로그 기반).
-    private func localBreakdown(_ block: SessionBlock?) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    /// 실측을 보여줄 수 없을 때. 아직 로그인하지 않았거나 조회가 실패한 상태다.
+    ///
+    /// 로컬 로그로 소진율을 추정해 대신 채우지 않는다. 로컬 로그에는 데스크톱·웹 사용분이
+    /// 없어 계정 전체 소진율보다 낮게 나오고, 그 숫자를 실측과 같은 자리에 같은 모양으로
+    /// 그리면 사용자는 구분하지 못한다.
+    @ViewBuilder private var serverUnavailable: some View {
+        let reason = snapshot.server?.failureReason
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: reason == nil ? "person.crop.circle.badge.plus"
+                                            : "wifi.exclamationmark")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(reason ?? "claude.ai에 로그인하면 계정 전체 소진율이 표시됩니다")
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+                // 일시적 실패에는 로그인 버튼을 붙이지 않는다 — 기다리면 풀리는 상태에서
+                // 로그인을 권하면 멀쩡한 세션을 버리게 된다.
+                if reason == nil {
+                    Button("Claude 로그인") { monitor.signIn() }
+                        .buttonStyle(.link)
+                }
+            }
+        }
+    }
+
+    // MARK: - 로컬 로그 상세
+
+    /// 서버가 주지 않는 토큰 상세. 창 경계를 아는 창만 줄이 생긴다.
+    private var localBreakdown: some View {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Claude Code 로컬 상세")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if let block {
-                HStack {
-                    Text("이번 5시간 창")
-                    Spacer()
-                    Text("\(config.metric.format(block.tokens.value(for: config.metric))) · 요청 \(block.requestCount)회")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                .font(.subheadline)
+            if let block = snapshot.activeBlock {
+                detailRow("이번 5시간 창",
+                          "\(block.tokens.billable.abbreviatedTokenString) · 요청 \(block.requestCount)회")
             }
-            HStack {
-                Label("오늘 \(config.metric.format(snapshot.todayTokens.value(for: config.metric)))",
-                      systemImage: "sun.max")
-                Spacer()
-                Label("캐시 읽기 \(snapshot.weeklyTokens.cacheRead.abbreviatedTokenString)",
-                      systemImage: "arrow.down.doc")
+            detailRow("오늘", snapshot.todayTokens.billable.abbreviatedTokenString)
+            if let weekly = snapshot.weeklyTokens {
+                detailRow("이번 주기",
+                          "\(weekly.billable.abbreviatedTokenString) · 캐시 읽기 \(weekly.cacheRead.abbreviatedTokenString)")
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
     }
 
-    // MARK: - 로컬 추정 섹션 (서버 없을 때)
-
-    private func sessionSection(_ block: SessionBlock) -> some View {
-        let ratio = snapshot.sessionUtilization(config: config)
-        let remaining = block.remainingTime(at: now)
-        let used = config.metric.format(block.tokens.value(for: config.metric))
-        let limit = config.metric.format(config.sessionLimit)
-        return VStack(alignment: .leading, spacing: 8) {
-            UsageBar(title: "5시간 창 (추정)",
-                     ratio: ratio,
-                     detail: "\(used) / \(limit) · 요청 \(block.requestCount)회",
-                     trailing: "\(Int((ratio * 100).rounded()))%",
-                     elapsedRatio: block.elapsedRatio(at: now),
-                     size: .large)
-
-            // 시계 아이콘을 시간 바와 같은 색으로 둔다 — 이 줄이 그 바의 설명이다.
-            HStack(spacing: 4) {
-                Image(systemName: "clock")
-                    .foregroundStyle(Color.usageTimeTint)
-                Text("리셋까지 \(remaining.compactDurationString)")
-                Text("(\(block.endsAt, format: .dateTime.hour().minute()))")
-                    .foregroundStyle(.tertiary)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(value)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
         }
+        .font(.subheadline)
     }
 
-    private var totalsSection: some View {
-        let weeklyRatio = snapshot.weeklyUtilization(config: config)
-        let used = config.metric.format(snapshot.weeklyTokens.value(for: config.metric))
-        let limit = config.metric.format(config.weeklyLimit)
-        return VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                UsageBar(title: "\(config.weeklyTitle) (추정)",
-                         ratio: weeklyRatio,
-                         detail: "\(used) / \(limit)",
-                         trailing: "\(Int((weeklyRatio * 100).rounded()))%",
-                         elapsedRatio: config.weeklyElapsedRatio(now: now),
-                         size: .large)
-
-                // 주간 리셋 요일을 지정했을 때만 리셋 시점이 존재한다.
-                if let reset = config.nextWeeklyReset(now: now) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock")
-                            .foregroundStyle(Color.usageTimeTint)
-                        Text("리셋까지 \(max(0, reset.timeIntervalSince(now)).compactRemainingString)")
-                        Text("(\(reset, format: .dateTime.weekday().hour().minute()))")
-                            .foregroundStyle(.tertiary)
-                    }
+    /// 이번 주기의 모델별 사용량. 주기 경계를 모르면 집계 자체가 없다.
+    @ViewBuilder private var modelSection: some View {
+        if let byModel = snapshot.weeklyTokensByModel, !byModel.isEmpty {
+            // 소비량이 큰 모델부터 최대 4개.
+            let top = byModel.sorted { $0.value > $1.value }.prefix(4)
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Text("모델별 (이번 주기)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                ForEach(Array(top), id: \.key) { model, tokens in
+                    HStack {
+                        Text(model.prettyModelName)
+                            .font(.subheadline)
+                        Spacer()
+                        Text(tokens.abbreviatedTokenString)
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
-
-            HStack {
-                Label("오늘 \(config.metric.format(snapshot.todayTokens.value(for: config.metric)))",
-                      systemImage: "sun.max")
-                Spacer()
-                Label("캐시 읽기 \(snapshot.weeklyTokens.cacheRead.abbreviatedTokenString)",
-                      systemImage: "arrow.down.doc")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private var modelSection: some View {
-        // 소비량이 큰 모델부터 최대 4개.
-        let top = snapshot.weeklyTokensByModel
-            .sorted { $0.value > $1.value }
-            .prefix(4)
-        return VStack(alignment: .leading, spacing: 4) {
-            Text("모델별 (7일)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ForEach(Array(top), id: \.key) { model, tokens in
-                HStack {
-                    Text(model.prettyModelName)
-                        .font(.subheadline)
-                    Spacer()
-                    Text(tokens.abbreviatedTokenString)
-                        .font(.subheadline)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    private var idle: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "moon.zzz")
-                .foregroundStyle(.secondary)
-            Text("진행 중인 5시간 창이 없습니다")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -306,21 +244,8 @@ struct UsagePanel: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             Text(reason)
-                .font(.subheadline)
+                .font(.caption)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    /// 서버 실측을 켰지만 조회에 실패했을 때만 보이는 작은 안내.
-    @ViewBuilder private var serverFailureNote: some View {
-        if config.showsServerUsage, let reason = snapshot.server?.failureReason {
-            HStack(alignment: .top, spacing: 4) {
-                Image(systemName: "wifi.exclamationmark")
-                Text("실측 사용량: \(reason)")
-            }
-            .font(.caption)
-            .foregroundStyle(.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

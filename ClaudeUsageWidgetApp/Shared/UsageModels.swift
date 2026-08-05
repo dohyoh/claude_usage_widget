@@ -221,12 +221,14 @@ struct ServerUsage: Codable, Hashable, Sendable {
 
     /// 아직 표시해도 되는 창만 남긴다. 남는 게 없으면 nil.
     ///
-    /// 위젯 타임라인은 시스템이 정한 시점에만 깨어나므로 스냅샷이 수 분~수십 분 낡을 수 있다.
-    /// 그때 서버 실측을 버리고 로컬 추정으로 돌아가면, 같은 데이터를 보는 두 위젯(알림센터·
-    /// 데스크톱)이 깨어난 시점에 따라 **서로 다른 수치**를 보여준다. 그래서 스냅샷 신선도와
-    /// 분리해 이 값 자체의 유효성만 따진다 — 리셋이 지난 창과 너무 오래된 조회만 버린다.
-    func validated(at now: Date, maxAge: TimeInterval = 30 * 60) -> ServerUsage? {
-        guard failureReason == nil, now.timeIntervalSince(fetchedAt) < maxAge else { return nil }
+    /// 위젯 타임라인은 시스템이 정한 시점에만 깨어나므로 스냅샷이 수 분~수십 분 낡을 수
+    /// 있다. **나이로는 버리지 않는다** — 실측을 대신할 값이 없으므로 버리면 화면이 비고,
+    /// 조금 낡은 참값이 빈 화면보다 낫다. 대신 조회 시각을 함께 표시해 신선도를 사용자가
+    /// 판단하게 한다.
+    ///
+    /// 리셋이 지난 창만 버린다. 그건 낡은 값이 아니라 **지난 창의 값**이라 성격이 다르다.
+    func validated(at now: Date) -> ServerUsage? {
+        guard failureReason == nil else { return nil }
         var result = self
         if let window = fiveHour, !window.isCurrent(at: now) { result.fiveHour = nil }
         if let window = sevenDay, !window.isCurrent(at: now) { result.sevenDay = nil }
@@ -241,17 +243,23 @@ struct ServerUsage: Codable, Hashable, Sendable {
 }
 
 /// 위젯과 메뉴바가 함께 렌더링하는 단일 데이터 스냅샷.
+///
+/// 소진율(%)은 오직 `server`에서 온다. 로컬 로그는 서버가 주지 않는 토큰 상세를 채우고,
+/// 그 집계는 창 경계를 아는 창에만 존재한다 — 경계를 모르는 창은 nil이고 화면에서 빠진다.
 struct UsageSnapshot: Codable, Hashable, Sendable {
     /// 스냅샷을 만든 시각.
     var generatedAt: Date
-    /// 현재 진행 중인 5시간 창. 최근 5시간 내 활동이 없으면 nil.
+    /// 진행 중인 5시간 창. 창 경계를 모르거나 그 안에 활동이 없으면 nil.
     var activeBlock: SessionBlock?
-    /// 최근 7일 사용량.
-    var weeklyTokens: TokenCounts
-    /// 오늘(로컬 자정 기준) 사용량.
+    /// 진행 중인 주간 주기의 사용량. 주기 경계를 모르면 nil.
+    ///
+    /// 이전 버전 스냅샷에는 롤링 7일 값이 들어 있다. 키가 있으면 그대로 읽히지만 다음
+    /// 갱신에서 덮어써진다.
+    var weeklyTokens: TokenCounts?
+    /// 오늘(로컬 자정 기준) 사용량. 경계가 로컬 자정이라 서버와 무관하게 늘 정확하다.
     var todayTokens: TokenCounts
-    /// 최근 7일 모델별 billable 토큰.
-    var weeklyTokensByModel: [String: Int]
+    /// 진행 중인 주간 주기의 모델별 billable 토큰. 주기 경계를 모르면 nil.
+    var weeklyTokensByModel: [String: Int]?
     /// 파싱 대상 세션 파일 수 — 데이터 유무 진단용.
     var scannedSessionCount: Int
     /// 읽기 실패 시 사용자에게 보여줄 메시지.
@@ -262,48 +270,22 @@ struct UsageSnapshot: Codable, Hashable, Sendable {
 
     static let empty = UsageSnapshot(generatedAt: .distantPast,
                                      activeBlock: nil,
-                                     weeklyTokens: TokenCounts(),
+                                     weeklyTokens: nil,
                                      todayTokens: TokenCounts(),
-                                     weeklyTokensByModel: [:],
+                                     weeklyTokensByModel: nil,
                                      scannedSessionCount: 0,
                                      failureReason: nil,
                                      server: nil)
 
-    /// 진행 중인 창의 측정값.
-    func sessionValue(for metric: UsageMetric) -> Double {
-        activeBlock?.tokens.value(for: metric) ?? 0
-    }
-
-    /// 5시간 창 한도 소진율(0...1+). 한도는 추정치다.
-    func sessionUtilization(config: UsageConfig) -> Double {
-        guard config.sessionLimit > 0 else { return 0 }
-        return sessionValue(for: config.metric) / config.sessionLimit
-    }
-
-    /// 주간 한도 소진율(0...1+). 한도는 추정치다.
-    func weeklyUtilization(config: UsageConfig) -> Double {
-        guard config.weeklyLimit > 0 else { return 0 }
-        return weeklyTokens.value(for: config.metric) / config.weeklyLimit
-    }
-
-    // MARK: - 서버 실측 우선 표시
-
-    /// 표시에 쓸 서버 실측값. 설정에서 껐거나 실패했으면 nil.
-    func usableServerUsage(config: UsageConfig) -> ServerUsage? {
-        guard config.showsServerUsage, let server, server.isUsable else { return nil }
+    /// 표시에 쓸 서버 실측값. 아직 없거나 조회에 실패했으면 nil.
+    var usableServerUsage: ServerUsage? {
+        guard let server, server.isUsable else { return nil }
         return server
     }
 
-    /// 5시간 창 소진율. 서버 실측이 있으면 그 값(0...1), 없으면 로그 기반 추정.
-    func effectiveSessionRatio(config: UsageConfig) -> Double {
-        if let window = usableServerUsage(config: config)?.fiveHour { return window.ratio }
-        return sessionUtilization(config: config)
-    }
-
-    /// 주간 소진율. 서버 실측 우선.
-    func effectiveWeeklyRatio(config: UsageConfig) -> Double {
-        if let window = usableServerUsage(config: config)?.sevenDay { return window.ratio }
-        return weeklyUtilization(config: config)
+    /// 진행 중인 창의 측정값. 캘리브레이션 입력이 기준으로 쓴다.
+    func sessionValue(for metric: UsageMetric) -> Double {
+        activeBlock?.tokens.value(for: metric) ?? 0
     }
 }
 

@@ -100,27 +100,21 @@ struct UsageSettingsView: View {
             }
 
             Section {
-                Toggle("claude.ai 실측 사용량 표시", isOn: Binding(
-                    get: { config.showsServerUsage },
-                    set: { monitor.config.serverUsageEnabled = $0 }
-                ))
-                if config.showsServerUsage {
-                    account
-                    organizationPicker
-                    Picker("갱신 주기", selection: Binding(
-                        get: { config.serverRefreshSeconds ?? 60 },
-                        set: { monitor.config.serverRefreshSeconds = $0 }
-                    )) {
-                        Text("30초").tag(30)
-                        Text("1분").tag(60)
-                        Text("3분").tag(180)
-                        Text("5분").tag(300)
-                        Text("10분").tag(600)
-                        Text("30분").tag(1800)
-                        Text("수동 (시작 시 1회 + 새로고침)").tag(0)
-                    }
-                    serverStatus
+                account
+                organizationPicker
+                Picker("갱신 주기", selection: Binding(
+                    get: { config.serverRefreshSeconds ?? 60 },
+                    set: { monitor.config.serverRefreshSeconds = $0 }
+                )) {
+                    Text("30초").tag(30)
+                    Text("1분").tag(60)
+                    Text("3분").tag(180)
+                    Text("5분").tag(300)
+                    Text("10분").tag(600)
+                    Text("30분").tag(1800)
+                    Text("수동 (시작 시 1회 + 새로고침)").tag(0)
                 }
+                serverStatus
             } header: {
                 Text("실측 사용량 (claude.ai)")
             } footer: {
@@ -433,7 +427,7 @@ struct UsageSettingsView: View {
                 }
             }
         } else {
-            Text("불러오는 중… 키체인 접근을 허용하면 표시됩니다.")
+            Text("불러오는 중…")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

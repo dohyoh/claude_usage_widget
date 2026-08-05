@@ -189,9 +189,6 @@ enum UsageSharedStore {
         ClaudeUsageReader.defaultClaudeHome.appendingPathComponent(".usage-widget-config.json")
     }
 
-    /// 위젯이 스스로 로그를 파싱하지 않고 스냅샷을 믿어도 되는 최대 나이.
-    static let snapshotFreshness: TimeInterval = 90
-
     // MARK: - Snapshot
 
     static func loadSnapshot() -> UsageSnapshot? {
