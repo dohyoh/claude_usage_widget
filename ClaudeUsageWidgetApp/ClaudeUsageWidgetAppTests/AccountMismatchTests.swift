@@ -2,8 +2,8 @@
 //  AccountMismatchTests.swift
 //  ClaudeUsageWidgetAppTests
 //
-//  로컬 추정은 늘 Claude Code 로그를 세고, 실측은 로그인 세션의 계정을 조회한다. 두 계정이
-//  다르면 패널의 두 숫자가 서로 다른 계정을 가리키는데, 지금은 그걸 알릴 방법이 없다.
+//  토큰 상세는 늘 Claude Code 로그를 세고, 소진율은 로그인 세션의 계정에서 온다. 두 계정이
+//  다르면 패널의 두 숫자가 서로 다른 계정을 가리킨다 — 숫자 자체는 멀쩡해 보인다.
 //
 //  Claude Code 쪽 계정은 ~/.claude.json 에 있어 인증 없이 읽힌다.
 //

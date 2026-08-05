@@ -19,11 +19,7 @@ final class UsageMonitor {
         didSet {
             guard config != oldValue else { return }
             UsageSharedStore.save(config)
-            // 서버 실측 토글이 켜졌으면 주기를 기다리지 않고 즉시 가져온다.
-            let serverToggledOn = config.showsServerUsage && !oldValue.showsServerUsage
-            // 주간 주기나 리셋 보정이 바뀌면 집계 범위가 달라진다.
             refresh()
-            if serverToggledOn { maybeFetchServer(force: true) }
             reloadWidget(force: true)
         }
     }
@@ -61,7 +57,7 @@ final class UsageMonitor {
     /// 이 로그인이 볼 수 있는 조직 — 설정의 조직 선택이 쓴다.
     private(set) var availableOrganizations: [OrganizationSummary] = []
 
-    /// 실측 계정과 로컬 추정 계정이 같은지. 다르면 패널의 두 숫자가 다른 계정을 가리킨다.
+    /// 실측 계정과 로컬 로그의 계정이 같은지. 다르면 패널의 두 숫자가 다른 계정을 가리킨다.
     var accountMatch: AccountMatch {
         AccountMatch.evaluate(server: serverAccount, local: localAccount)
     }
@@ -92,8 +88,9 @@ final class UsageMonitor {
 
     /// 지금 즉시 다시 읽는다. 메뉴의 "새로 고침"이 호출한다.
     func refresh() {
-        var fresh = reader.makeSnapshot(config: config)
-        fresh.server = config.showsServerUsage ? lastServerUsage : nil
+        // 창 경계는 실측이 알려준 리셋 시각에서 온다 — 로그만으로는 맞출 수 없다.
+        var fresh = reader.makeSnapshot(bounds: lastServerUsage?.localWindowBounds ?? .unknown)
+        fresh.server = lastServerUsage
         snapshot = fresh
         UsageSharedStore.save(fresh)
         reloadWidget(force: false)
@@ -124,17 +121,6 @@ final class UsageMonitor {
 
     /// 주기가 됐거나 강제일 때 백그라운드에서 실측 사용량을 가져온다.
     private func maybeFetchServer(force: Bool) {
-        guard config.showsServerUsage else {
-            // 껐으면 이전 값을 지우고 스냅샷에서도 뺀다.
-            if lastServerUsage != nil {
-                lastServerUsage = nil
-                var updated = snapshot
-                updated.server = nil
-                snapshot = updated
-                UsageSharedStore.save(updated)
-            }
-            return
-        }
         guard !serverFetchInFlight else { return }
         let now = Date()
         if config.serverRefreshIsManual {
@@ -164,24 +150,25 @@ final class UsageMonitor {
         // 조직 목록은 조회에 성공했을 때만 갈아 끼운다. 일시적 실패로 설정의 선택지를
         // 비워 버리면 사용자가 고른 조직이 사라진 것처럼 보인다.
         if !result.organizations.isEmpty { availableOrganizations = result.organizations }
-        let usage = result.usage
-        lastServerUsage = usage
-        guard config.showsServerUsage else { return }
-        var updated = snapshot
-        updated.server = usage
-        snapshot = updated
-        UsageSharedStore.save(updated)
-        reloadWidget(force: false)
+        lastServerUsage = result.usage
+        // 실측이 창 경계를 알려주므로 로컬 집계도 함께 다시 만든다 — 경계가 바뀌면
+        // 그 창의 요청 수·토큰도 달라진다.
+        refresh()
     }
 
     // MARK: - 메뉴바 표시
 
     /// 메뉴바 아이콘에 그릴 값 묶음 — 소진율·창에서 지난 시간·색 단계·숫자.
     var menuBarIconModel: MenuBarIconModel {
-        MenuBarIconModel(usage: snapshot.effectiveSessionRatio(config: config),
+        MenuBarIconModel(usage: sessionWindow?.ratio ?? 0,
                          elapsed: sessionElapsedRatio,
                          severity: sessionSeverity,
                          percent: sessionPercent)
+    }
+
+    /// 표시에 쓸 5시간 창 실측. 실측이 없으면 메뉴바에 그릴 값도 없다.
+    private var sessionWindow: ServerUsageWindow? {
+        snapshot.usableServerUsage?.fiveHour
     }
 
     /// 지금 설정으로 그릴 메뉴바 라벨.
@@ -211,79 +198,51 @@ final class UsageMonitor {
         return lines
     }
 
-    /// 5시간 창 소진율(%). 서버 실측이 있으면 그 값을 쓴다. 표시할 값이 없으면 nil.
+    /// 5시간 창 소진율(%). 실측이 없으면 nil.
     var sessionPercent: Int? {
-        if let window = snapshot.usableServerUsage(config: config)?.fiveHour {
-            return Int(window.utilizationPercent.rounded())
-        }
-        guard snapshot.activeBlock != nil else { return nil }
-        let ratio = snapshot.sessionUtilization(config: config)
-        guard ratio > 0 else { return nil }
-        return Int((ratio * 100).rounded())
+        sessionWindow.map { Int($0.utilizationPercent.rounded()) }
     }
 
-    /// 5시간 창에서 지금까지 지나간 비율(0...1). 진행 중인 창이 없으면 nil.
-    ///
-    /// 서버 실측이 준 리셋 시각을 먼저 쓰고, 없으면 로그로 잡은 창의 경과를 쓴다.
+    /// 5시간 창에서 지금까지 지나간 비율(0...1). 리셋 시각을 모르면 nil.
     private var sessionElapsedRatio: Double? {
-        let now = Date()
-        if let window = snapshot.usableServerUsage(config: config)?.fiveHour,
-           let ratio = window.elapsedRatio(at: now, window: ClaudeUsageLimits.sessionWindow) {
-            return ratio
-        }
-        guard let block = snapshot.activeBlock, block.isActive(at: now) else { return nil }
-        return block.elapsedRatio(at: now)
+        sessionWindow?.elapsedRatio(at: Date(), window: ClaudeUsageLimits.sessionWindow)
     }
 
-    /// 5시간 창 소진율 텍스트. 소진율을 못 구하면 측정값 자체나 «—» 로 대체한다.
+    /// 5시간 창 소진율 텍스트. 실측이 없으면 «—».
     private var sessionLabel: String {
-        if let percent = sessionPercent { return "\(percent)%" }
-        guard snapshot.activeBlock != nil else { return "—" }
-        return config.metric.format(snapshot.sessionValue(for: config.metric))
+        sessionPercent.map { "\($0)%" } ?? "—"
     }
 
-    /// 주간 소진율. 실측도 없고 로컬 집계도 비어 있으면 붙일 게 없다.
+    /// 주간 소진율. 실측이 없으면 붙일 게 없다.
     private var weeklyLabel: String? {
-        if let window = snapshot.usableServerUsage(config: config)?.sevenDay {
-            return "주 \(Int(window.utilizationPercent.rounded()))%"
-        }
-        guard snapshot.weeklyTokens.total > 0 else { return nil }
-        return "주 \(Int((snapshot.weeklyUtilization(config: config) * 100).rounded()))%"
+        snapshot.usableServerUsage?.sevenDay
+            .map { "주 \(Int($0.utilizationPercent.rounded()))%" }
     }
 
-    /// 5시간 창 리셋까지 남은 시간. 서버가 준 `resets_at`을 먼저 쓰고, 없으면 창의 끝을 쓴다.
+    /// 5시간 창 리셋까지 남은 시간. 서버가 `resets_at`을 주지 않았으면 nil.
     private var remainingLabel: String? {
-        let now = Date()
-        if let remaining = snapshot.usableServerUsage(config: config)?.fiveHour?.remainingTime(at: now) {
-            return remaining.compactDurationString
-        }
-        guard let block = snapshot.activeBlock, block.isActive(at: now) else { return nil }
-        return block.remainingTime(at: now).compactDurationString
+        sessionWindow?.remainingTime(at: Date())?.compactDurationString
     }
 
     /// 메뉴바에 표시할 데이터가 있는지 — 아이콘 선택에 쓴다.
-    var hasSessionData: Bool {
-        snapshot.usableServerUsage(config: config)?.fiveHour != nil || snapshot.activeBlock != nil
-    }
+    var hasSessionData: Bool { sessionWindow != nil }
 
-    /// 사용률에 따른 경고 단계. 색 결정에만 쓴다. 서버 실측 우선.
+    /// 사용률에 따른 경고 단계. 색 결정에만 쓴다.
     var sessionSeverity: UsageSeverity {
-        UsageSeverity(ratio: snapshot.effectiveSessionRatio(config: config))
+        UsageSeverity(ratio: sessionWindow?.ratio ?? 0)
     }
 
-    var weeklySeverity: UsageSeverity {
-        UsageSeverity(ratio: snapshot.effectiveWeeklyRatio(config: config))
-    }
-
-    /// 캘리브레이션 시 기준이 되는 현재 측정값.
-    var currentSessionValue: Double { snapshot.sessionValue(for: config.metric) }
-
-    /// 표시할 내용(로컬 사용량 또는 서버 %)이 바뀌었을 때만 위젯을 깨운다.
+    /// 위젯이 그리는 값(실측 백분율과 실패 사유)이 바뀌었을 때만 위젯을 깨운다.
+    ///
+    /// 로컬 상세는 메뉴바 패널에만 나오므로 위젯 갱신 조건에 넣지 않는다.
     private func reloadWidget(force: Bool) {
         var hasher = Hasher()
-        hasher.combine(snapshot.activeBlock?.tokens.billable ?? 0)
-        hasher.combine(Int((snapshot.server?.fiveHour?.utilizationPercent ?? -1).rounded()))
-        hasher.combine(Int((snapshot.server?.sevenDay?.utilizationPercent ?? -1).rounded()))
+        for window in [snapshot.server?.fiveHour,
+                       snapshot.server?.sevenDay,
+                       snapshot.server?.sevenDayOpus] {
+            hasher.combine(Int((window?.utilizationPercent ?? -1).rounded()))
+        }
+        hasher.combine(snapshot.server?.failureReason)
         let signature = hasher.finalize()
         let changed = signature != lastPublishedSignature
         lastPublishedSignature = signature
