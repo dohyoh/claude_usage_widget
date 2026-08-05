@@ -53,17 +53,21 @@ final class ClaudeUsageReader {
 
     // MARK: - Snapshot
 
-    /// - Parameter config: 주간 주기와 5시간 창 리셋 보정에 쓴다.
-    func makeSnapshot(now: Date = Date(), config: UsageConfig = .default) -> UsageSnapshot {
-        // 파일 스캔·보관 범위는 항상 7일로 둔다. 주간 주기가 그보다 짧아도
-        // 창 경계를 옮기면 과거 데이터가 다시 필요해질 수 있다.
-        let weeklyCutoff = now.addingTimeInterval(-ClaudeUsageLimits.weeklyWindow)
-        // 집계에 실제로 쓰는 주간 시작점 — 고정 주기면 마지막 리셋 시각.
-        let weeklyStart = max(config.weeklyWindowStart(now: now), weeklyCutoff)
+    /// - Parameter bounds: 서버 실측이 알려준 창 경계. 로그만으로는 맞출 수 없는 값이라,
+    ///   경계를 모르는 창은 집계를 만들지 않는다.
+    func makeSnapshot(now: Date = Date(),
+                      bounds: UsageWindowBounds = .unknown) -> UsageSnapshot {
+        // 주간 집계 시작점. 서버가 리셋 시각을 알려주지 않았으면 **집계하지 않는다** —
+        // 롤링 7일로 근사하면 지난 주기가 섞여 과다 계상된 값이 조용히 화면에 오른다.
+        let weeklyStart = bounds.weeklyStart
+        // 파일 스캔·보관 범위. 주기 시작이 이 범위 밖이면 주기 앞부분이 조용히 누락되므로
+        // 경계보다 한 시간 앞까지 훑는다. 7일은 하한이다 — 5시간 창은 그 안에 늘 들어온다.
+        let scanCutoff = min(now.addingTimeInterval(-ClaudeUsageLimits.weeklyWindow),
+                            (weeklyStart ?? now).addingTimeInterval(-3600))
 
         let sessionFiles: [URL]
         do {
-            sessionFiles = try discoverSessionFiles(modifiedAfter: weeklyCutoff)
+            sessionFiles = try discoverSessionFiles(modifiedAfter: scanCutoff)
         } catch {
             var snapshot = UsageSnapshot.empty
             snapshot.generatedAt = now
@@ -72,7 +76,7 @@ final class ClaudeUsageReader {
         }
 
         for file in sessionFiles {
-            ingest(file: file, keepingRecordsAfter: weeklyCutoff)
+            ingest(file: file, keepingRecordsAfter: scanCutoff)
         }
         pruneStates(for: sessionFiles)
 
@@ -81,93 +85,49 @@ final class ClaudeUsageReader {
         var weekly = TokenCounts()
         var weeklyByModel: [String: Int] = [:]
         var today = TokenCounts()
-        var recentRecords: [UsageRecord] = []
+        var sessionRecords: [UsageRecord] = []
 
         let todayStart = Calendar.current.startOfDay(for: now)
 
         for state in fileStates.values {
             for record in state.records {
-                guard record.timestamp >= weeklyCutoff, record.timestamp <= now else { continue }
+                guard record.timestamp >= scanCutoff, record.timestamp <= now else { continue }
                 guard seen.insert(record.dedupeKey).inserted else { continue }
 
-                // 5시간 창 계산에는 주간 경계와 무관하게 전체를 넘긴다.
-                recentRecords.append(record)
-
-                guard record.timestamp >= weeklyStart else { continue }
+                if record.timestamp >= todayStart { today += record.tokens }
+                if let sessionStart = bounds.sessionStart, record.timestamp >= sessionStart {
+                    sessionRecords.append(record)
+                }
+                guard let weeklyStart, record.timestamp >= weeklyStart else { continue }
                 weekly += record.tokens
                 weeklyByModel[record.model, default: 0] += record.tokens.billable
-                if record.timestamp >= todayStart { today += record.tokens }
             }
         }
 
         return UsageSnapshot(generatedAt: now,
-                             activeBlock: activeBlock(from: recentRecords, now: now, config: config),
-                             weeklyTokens: weekly,
+                             activeBlock: bounds.sessionStart
+                                 .map { block(from: sessionRecords, start: $0) },
+                             weeklyTokens: weeklyStart == nil ? nil : weekly,
                              todayTokens: today,
-                             weeklyTokensByModel: weeklyByModel,
+                             weeklyTokensByModel: weeklyStart == nil ? nil : weeklyByModel,
                              scannedSessionCount: sessionFiles.count,
                              failureReason: nil)
     }
 
-    // MARK: - 5시간 창 계산
+    // MARK: - 5시간 창 집계
 
-    /// 활동이 5시간 이상 끊기면 새 창이 열린다고 보고, 마지막 창만 반환한다.
+    /// 시작 시각이 정해진 창 하나를 만든다.
     ///
-    /// 설정에 유효한 리셋 시각이 있으면 그 창 하나로 확정한다. 로컬 로그에 없는
-    /// 데스크톱·웹 사용분 때문에 로그만으로는 창 시작이 늦게 잡힌다.
-    private func activeBlock(from records: [UsageRecord], now: Date, config: UsageConfig) -> SessionBlock? {
-        guard !records.isEmpty else { return nil }
-        let sorted = records.sorted { $0.timestamp < $1.timestamp }
-
-        if let start = config.sessionWindowStart(now: now) {
-            return block(from: sorted, start: start)
-        }
-
-        var blockStart: Date?
-        var current: SessionBlock?
-
-        for record in sorted {
-            let start = blockStart
-            let needsNewBlock: Bool
-            if let start, let current {
-                // 창 길이를 넘겼거나, 마지막 활동 이후 창 길이만큼 쉬었으면 새 창.
-                needsNewBlock = record.timestamp >= start.addingTimeInterval(ClaudeUsageLimits.sessionWindow)
-                    || record.timestamp >= current.lastActivityAt.addingTimeInterval(ClaudeUsageLimits.sessionWindow)
-            } else {
-                needsNewBlock = true
-            }
-
-            if needsNewBlock {
-                // 창 시작은 첫 요청 시각 그대로 쓴다. 정시로 내리면 창이 최대 59분
-                // 짧아져 조기 만료되고, 그 뒤 요청이 새 창을 열어 집계가 초기화된다.
-                blockStart = record.timestamp
-                current = SessionBlock(startedAt: record.timestamp,
-                                       lastActivityAt: record.timestamp,
-                                       tokens: record.tokens,
-                                       requestCount: 1,
-                                       tokensByModel: [record.model: record.tokens.billable])
-            } else if var block = current {
-                block.lastActivityAt = record.timestamp
-                block.tokens += record.tokens
-                block.requestCount += 1
-                block.tokensByModel[record.model, default: 0] += record.tokens.billable
-                current = block
-            }
-        }
-
-        // 창이 이미 만료됐다면 진행 중인 한도 창이 없다.
-        guard let block = current, block.isActive(at: now) else { return nil }
-        return block
-    }
-
-    /// 시작 시각이 이미 정해진 창 하나를 만든다.
-    private func block(from sorted: [UsageRecord], start: Date) -> SessionBlock {
+    /// 시작 시각은 서버가 알려준 리셋 시각에서 역산한 값이다. 로그의 첫 요청 시각으로
+    /// 추정하지 않는다 — 창을 여는 요청이 Claude 데스크톱·웹에서 나갔으면 로컬 로그에
+    /// 없어 시작이 늦게 잡히고, 그러면 이 창의 요청 수와 토큰이 통째로 모자라게 나온다.
+    private func block(from records: [UsageRecord], start: Date) -> SessionBlock {
         var result = SessionBlock(startedAt: start,
                                   lastActivityAt: start,
                                   tokens: TokenCounts(),
                                   requestCount: 0,
                                   tokensByModel: [:])
-        for record in sorted where record.timestamp >= start {
+        for record in records.sorted(by: { $0.timestamp < $1.timestamp }) {
             result.lastActivityAt = record.timestamp
             result.tokens += record.tokens
             result.requestCount += 1
@@ -268,23 +228,13 @@ final class ClaudeUsageReader {
                   ?? Self.timestampFormatterNoFraction.date(from: timestampString)
         else { return nil }
 
-        let cacheCreation = usage["cache_creation_input_tokens"] as? Int ?? 0
-        // 캐시 쓰기는 TTL별 단가가 다르다. 분해가 없으면 1시간으로 본다 —
-        // Claude Code는 1시간 TTL을 쓰므로 그쪽이 안전한 추정이다.
-        let breakdown = usage["cache_creation"] as? [String: Any]
-        let write1h = breakdown?["ephemeral_1h_input_tokens"] as? Int
-        let write5m = breakdown?["ephemeral_5m_input_tokens"] as? Int
-
-        var tokens = TokenCounts(input: usage["input_tokens"] as? Int ?? 0,
+        let tokens = TokenCounts(input: usage["input_tokens"] as? Int ?? 0,
                                  output: usage["output_tokens"] as? Int ?? 0,
-                                 cacheCreation: cacheCreation,
-                                 cacheRead: usage["cache_read_input_tokens"] as? Int ?? 0,
-                                 cacheCreation1h: write1h ?? (write5m == nil ? cacheCreation : 0),
-                                 cacheCreation5m: write5m ?? 0)
+                                 cacheCreation: usage["cache_creation_input_tokens"] as? Int ?? 0,
+                                 cacheRead: usage["cache_read_input_tokens"] as? Int ?? 0)
         guard tokens.total > 0 else { return nil }
 
         let model = message["model"] as? String ?? "unknown"
-        tokens.costUSD = ModelPricing.cost(model: model, tokens: tokens)
         // requestId 는 재시도·스트리밍으로 여러 줄에 반복되므로 중복 제거 키로 알맞다.
         let dedupeKey = (object["requestId"] as? String)
             ?? (message["id"] as? String)

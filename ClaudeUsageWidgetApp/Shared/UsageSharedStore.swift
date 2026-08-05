@@ -8,37 +8,27 @@
 
 import Foundation
 
-/// 사용자가 조정하는 추정 한도. Claude는 남은 한도를 로컬에 남기지 않는다.
+/// 사용자가 조정하는 표시 설정.
+///
+/// 사용량 숫자는 전부 claude.ai 실측에서 오므로 여기에 한도나 측정 방식이 없다. 남은 것은
+/// «어떻게 보여줄지»(메뉴바)와 «어디서 얼마나 자주 가져올지»(조직·주기)뿐이다.
+///
+/// 필드를 지워도 낡은 설정 파일은 그대로 읽힌다 — 합성 `Decodable` 이 `CodingKeys` 에 없는
+/// 키를 무시하므로, 사용자가 고른 메뉴바 디자인·색·조직은 보존되고 다음 저장에서 죽은 키가
+/// 사라진다.
 struct UsageConfig: Codable, Hashable, Sendable {
-    /// 소진율을 무엇으로 재는가.
-    var metric: UsageMetric = .costUSD
-    /// `metric` 단위의 5시간 창 한도.
-    var sessionLimit: Double = UsageMetric.costUSD.defaultSessionLimit
-    /// `metric` 단위의 주간 한도.
-    var weeklyLimit: Double = UsageMetric.costUSD.defaultWeeklyLimit
-
-    /// 주간 한도가 리셋되는 요일. `Calendar` 기준(1=일요일 … 7=토요일).
-    /// nil이면 고정 주기를 모른다는 뜻이고 최근 7일 롤링으로 집계한다.
-    var weeklyResetWeekday: Int? = 3   // 화요일
-    /// 주간 리셋 시각(로컬 시간).
-    var weeklyResetHour: Int = 15
-    var weeklyResetMinute: Int = 0
-
-    /// Claude 앱에서 확인한 5시간 창 리셋 시각.
-    ///
-    /// 로컬 로그에 없는 데스크톱·웹 사용분 때문에 창 시작이 늦게 잡히는 것을 보정한다.
-    /// 이 시각이 지나면 자동으로 무시하고 로그 기반 계산으로 돌아간다.
-    var sessionResetAt: Date?
-
-    /// Claude 데스크톱 앱 쿠키(Safe Storage 복호화)로 claude.ai 실측 사용량을 가져올지.
-    ///
-    /// nil이면 켜짐으로 본다 — 이전 버전 설정 파일에 이 키가 없어도 디코딩이 깨지지 않게
-    /// Optional로 둔다. 실제 판단은 `showsServerUsage`를 쓴다.
-    var serverUsageEnabled: Bool?
-
     /// 실측 사용량 조회 주기(초). nil이면 기본 60초, 0이면 자동 갱신 없이 시작 시 1회·수동만.
     /// 이전 버전 호환을 위해 Optional. 실제 값은 `serverRefreshInterval`을 쓴다.
     var serverRefreshSeconds: Int?
+
+    /// 실측 사용량을 조회할 organization UUID. nil이면 자동으로 고른다.
+    ///
+    /// 한 로그인이 여러 조직에 속할 수 있고(개인 Pro + 팀 시트), 어느 조직을 보느냐에 따라
+    /// 숫자가 달라진다. 자동 선택은 조직 목록의 순서에 의존해 엉뚱한 조직을 잡을 수 있으므로
+    /// 사용자가 직접 지정할 수 있게 둔다. 실제 선택은 `OrganizationChoice.select`가 한다.
+    ///
+    /// 이전 버전 설정 파일에 이 키가 없어도 디코딩이 깨지지 않게 Optional로 둔다.
+    var organizationUuid: String?
 
     /// 메뉴바 라벨에 주간 소진율을 함께 표시할지. nil = 꺼짐.
     ///
@@ -74,9 +64,6 @@ struct UsageConfig: Codable, Hashable, Sendable {
     /// 메뉴바에 리셋까지 남은 시간을 붙일지. 설정이 없으면 꺼짐.
     var showsMenuBarRemaining: Bool { menuBarShowsRemaining ?? false }
 
-    /// 서버 실측 사용량을 표시할지. 설정이 없으면 기본 켜짐.
-    var showsServerUsage: Bool { serverUsageEnabled ?? true }
-
     /// 실측 조회 주기. 0 이하이면 자동 갱신을 하지 않는다(시작 시 1회 + 수동 새로고침).
     var serverRefreshInterval: TimeInterval {
         guard let seconds = serverRefreshSeconds else { return 60 }
@@ -85,88 +72,6 @@ struct UsageConfig: Codable, Hashable, Sendable {
 
     /// 자동 갱신 없이 수동으로만 조회하는 모드인지.
     var serverRefreshIsManual: Bool { serverRefreshInterval <= 0 }
-
-    /// 주간 집계를 시작할 시점. 고정 주기를 모르면 7일 전.
-    func weeklyWindowStart(now: Date, calendar: Calendar = .current) -> Date {
-        guard let weekday = weeklyResetWeekday else {
-            return now.addingTimeInterval(-ClaudeUsageLimits.weeklyWindow)
-        }
-        var components = DateComponents()
-        components.weekday = weekday
-        components.hour = weeklyResetHour
-        components.minute = weeklyResetMinute
-        components.second = 0
-        // now 이전의 가장 가까운 (요일, 시각) 지점.
-        guard let previous = calendar.nextDate(after: now,
-                                              matching: components,
-                                              matchingPolicy: .nextTimePreservingSmallerComponents,
-                                              direction: .backward) else {
-            return now.addingTimeInterval(-ClaudeUsageLimits.weeklyWindow)
-        }
-        return previous
-    }
-
-    /// 다음 주간 리셋 시각. 고정 주기를 모르면 nil.
-    func nextWeeklyReset(now: Date, calendar: Calendar = .current) -> Date? {
-        guard weeklyResetWeekday != nil else { return nil }
-        return weeklyWindowStart(now: now, calendar: calendar)
-            .addingTimeInterval(ClaudeUsageLimits.weeklyWindow)
-    }
-
-    /// 주간 주기에서 지금까지 지나간 비율(0...1). 고정 주기를 모르면 nil — 롤링에는 리셋이 없다.
-    func weeklyElapsedRatio(now: Date, calendar: Calendar = .current) -> Double? {
-        guard weeklyResetWeekday != nil else { return nil }
-        let start = weeklyWindowStart(now: now, calendar: calendar)
-        return min(1, max(0, now.timeIntervalSince(start) / ClaudeUsageLimits.weeklyWindow))
-    }
-
-    /// 주간 막대에 붙일 짧은 제목. 고정 주기와 롤링을 구분한다.
-    var weeklyTitle: String { weeklyResetWeekday == nil ? "최근 7일" : "이번 주기" }
-
-    /// 요일 표시용 심볼(월/화/…).
-    static func weekdaySymbol(_ weekday: Int, calendar: Calendar = .current) -> String {
-        let symbols = calendar.shortWeekdaySymbols
-        let index = weekday - 1
-        guard symbols.indices.contains(index) else { return "?" }
-        return symbols[index]
-    }
-
-    /// 알고 있는 리셋 시각에서 유도한 현재 5시간 창의 시작 시점.
-    ///
-    /// - 리셋이 아직 오지 않았으면 그 5시간 전이 현재 창의 시작이다.
-    /// - 리셋이 지났고 5시간 안이면 **그 시각이 새 창의 시작**이다.
-    /// - 그보다 오래됐으면 정보가 낡았으므로 nil을 주고 로그 기반 추정으로 돌아간다.
-    func sessionWindowStart(now: Date) -> Date? {
-        guard let reset = sessionResetAt else { return nil }
-        if reset > now {
-            return reset.addingTimeInterval(-ClaudeUsageLimits.sessionWindow)
-        }
-        if now < reset.addingTimeInterval(ClaudeUsageLimits.sessionWindow) {
-            return reset
-        }
-        return nil
-    }
-
-    /// 측정 방식을 바꾸면 한도 단위도 달라지므로 그 방식의 기본값으로 되돌린다.
-    mutating func changeMetric(to newMetric: UsageMetric) {
-        guard newMetric != metric else { return }
-        metric = newMetric
-        sessionLimit = newMetric.defaultSessionLimit
-        weeklyLimit = newMetric.defaultWeeklyLimit
-    }
-
-    /// Claude가 표시하는 소진율에 맞춰 한도를 역산한다.
-    ///
-    /// 5시간 창을 기준으로 맞추고, 주간 한도는 기존 비율을 유지한다.
-    /// - Parameters:
-    ///   - observedPercent: Claude에서 본 값(0 초과).
-    ///   - currentValue: 같은 시점 위젯의 측정값.
-    mutating func calibrate(observedPercent: Double, currentValue: Double) {
-        guard observedPercent > 0, currentValue > 0 else { return }
-        let ratio = weeklyLimit / max(sessionLimit, .leastNonzeroMagnitude)
-        sessionLimit = currentValue / (observedPercent / 100)
-        weeklyLimit = sessionLimit * ratio
-    }
 }
 
 enum UsageSharedStore {
@@ -175,31 +80,49 @@ enum UsageSharedStore {
         ClaudeUsageReader.defaultClaudeHome.appendingPathComponent(".usage-widget-snapshot.json")
     }
 
-    /// 한도 설정. 샌드박스 때문에 UserDefaults 를 공유할 수 없어 파일로 둔다.
+    /// 표시 설정. 샌드박스 때문에 UserDefaults 를 공유할 수 없어 파일로 둔다.
     static var configURL: URL {
         ClaudeUsageReader.defaultClaudeHome.appendingPathComponent(".usage-widget-config.json")
     }
 
-    /// 위젯이 스스로 로그를 파싱하지 않고 스냅샷을 믿어도 되는 최대 나이.
-    static let snapshotFreshness: TimeInterval = 90
-
     // MARK: - Snapshot
 
     static func loadSnapshot() -> UsageSnapshot? {
-        guard let data = try? Data(contentsOf: snapshotURL) else { return nil }
+        loadSnapshot(from: snapshotURL)
+    }
+
+    /// 지정한 파일에서 스냅샷을 읽는다. 못 읽거나 형식이 어긋나면 nil.
+    ///
+    /// 경로를 받는 형태로 열어 둬 테스트가 실제 사용자 파일을 건드리지 않고, 프로덕션과
+    /// **같은 디코더 구성**(iso8601 날짜)으로 하위 호환을 검증할 수 있다.
+    static func loadSnapshot(from url: URL) -> UsageSnapshot? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
         return try? decoder.decode(UsageSnapshot.self, from: data)
     }
 
     @discardableResult
     static func save(_ snapshot: UsageSnapshot) -> Bool {
+        save(snapshot, to: snapshotURL)
+    }
+
+    @discardableResult
+    static func save(_ snapshot: UsageSnapshot, to url: URL) -> Bool {
         guard let data = try? encoder.encode(snapshot) else { return false }
-        return writeAtomically(data, to: snapshotURL)
+        return writeAtomically(data, to: url)
     }
 
     // MARK: - Config
 
     static func loadConfig() -> UsageConfig {
-        guard let data = try? Data(contentsOf: configURL),
+        loadConfig(from: configURL)
+    }
+
+    /// 지정한 파일에서 설정을 읽는다. 못 읽거나 형식이 어긋나면 기본값을 준다.
+    ///
+    /// 경로를 받는 형태로 열어 둬 테스트가 실제 사용자 파일을 건드리지 않고, 프로덕션과
+    /// **같은 디코더 구성**(iso8601 날짜)으로 하위 호환을 검증할 수 있다.
+    static func loadConfig(from url: URL) -> UsageConfig {
+        guard let data = try? Data(contentsOf: url),
               let config = try? decoder.decode(UsageConfig.self, from: data)
         else { return .default }
         return config
@@ -209,6 +132,36 @@ enum UsageSharedStore {
     static func save(_ config: UsageConfig) -> Bool {
         guard let data = try? encoder.encode(config) else { return false }
         return writeAtomically(data, to: configURL)
+    }
+
+    // MARK: - Account
+
+    /// 실측을 가져온 계정 캐시. 설정과 수명주기가 달라 파일을 따로 둔다.
+    static var accountURL: URL {
+        ClaudeUsageReader.defaultClaudeHome.appendingPathComponent(".usage-widget-account.json")
+    }
+
+    static func loadAccount() -> AccountCache? {
+        loadAccount(from: accountURL)
+    }
+
+    /// 지정한 파일에서 계정 캐시를 읽는다. 파일이 없거나 형식이 어긋나면 nil.
+    ///
+    /// 설정과 달리 기본값이 없다 — 캐시가 없으면 "아직 모른다"이고, 그때는 다시 조회한다.
+    static func loadAccount(from url: URL) -> AccountCache? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? decoder.decode(AccountCache.self, from: data)
+    }
+
+    @discardableResult
+    static func save(_ account: AccountCache) -> Bool {
+        save(account, to: accountURL)
+    }
+
+    @discardableResult
+    static func save(_ account: AccountCache, to url: URL) -> Bool {
+        guard let data = try? encoder.encode(account) else { return false }
+        return writeAtomically(data, to: url)
     }
 
     // MARK: - Helpers
