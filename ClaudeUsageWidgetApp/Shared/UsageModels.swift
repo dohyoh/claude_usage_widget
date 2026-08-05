@@ -162,6 +162,24 @@ struct ServerUsageWindow: Codable, Hashable, Sendable {
     }
 }
 
+/// 로컬 로그 집계에 쓸 창 경계.
+///
+/// 로그만으로는 창 경계를 맞출 수 없다. 5시간 창을 여는 첫 요청이 Claude 데스크톱·웹에서
+/// 나갔으면 로컬 로그에 없어 시작이 늦게 잡히고, 주간 한도는 롤링이 아니라 고정 주기라
+/// 최근 7일로 집계하면 지난 주기가 섞인다. 서버가 준 리셋 시각에서 창 길이를 빼면 그
+/// 경계를 정확히 얻는다.
+///
+/// 경계를 모르는 창은 nil이고, 그때는 그 창의 집계를 **아예 만들지 않는다** — 근사치를
+/// 만들면 부정확한 숫자가 조용히 화면에 오른다.
+struct UsageWindowBounds: Hashable, Sendable {
+    /// 진행 중인 5시간 창의 시작.
+    var sessionStart: Date?
+    /// 진행 중인 주간 주기의 시작.
+    var weeklyStart: Date?
+
+    static let unknown = UsageWindowBounds()
+}
+
 /// claude.ai `/api/organizations/{org}/usage` 응답에서 뽑은 실측 사용량.
 ///
 /// 앱이 자체 로그인 창으로 확보한 세션으로 조회하므로, Claude Code·데스크톱·웹을 모두
@@ -188,6 +206,18 @@ struct ServerUsage: Codable, Hashable, Sendable {
 
     /// 표시 가능한 실측 데이터가 있는지.
     var isUsable: Bool { failureReason == nil && (fiveHour != nil || sevenDay != nil) }
+
+    /// 로컬 집계에 쓸 창 경계. 리셋 시각에서 창 길이를 빼면 그 창의 시작이다.
+    ///
+    /// 리셋이 지난 창은 `validated(at:)`이 이미 걸러내므로 여기서 다시 따지지 않는다.
+    /// 서버가 리셋 시각을 주지 않은 창은 경계를 모르는 상태로 남는다.
+    var localWindowBounds: UsageWindowBounds {
+        UsageWindowBounds(
+            sessionStart: fiveHour?.resetsAt?
+                .addingTimeInterval(-ClaudeUsageLimits.sessionWindow),
+            weeklyStart: sevenDay?.resetsAt?
+                .addingTimeInterval(-ClaudeUsageLimits.weeklyWindow))
+    }
 
     /// 아직 표시해도 되는 창만 남긴다. 남는 게 없으면 nil.
     ///

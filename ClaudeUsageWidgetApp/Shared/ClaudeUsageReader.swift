@@ -53,17 +53,22 @@ final class ClaudeUsageReader {
 
     // MARK: - Snapshot
 
-    /// - Parameter config: 주간 주기와 5시간 창 리셋 보정에 쓴다.
-    func makeSnapshot(now: Date = Date(), config: UsageConfig = .default) -> UsageSnapshot {
-        // 파일 스캔·보관 범위는 항상 7일로 둔다. 주간 주기가 그보다 짧아도
-        // 창 경계를 옮기면 과거 데이터가 다시 필요해질 수 있다.
-        let weeklyCutoff = now.addingTimeInterval(-ClaudeUsageLimits.weeklyWindow)
-        // 집계에 실제로 쓰는 주간 시작점 — 고정 주기면 마지막 리셋 시각.
-        let weeklyStart = max(config.weeklyWindowStart(now: now), weeklyCutoff)
+    /// - Parameters:
+    ///   - config: 주간 주기와 5시간 창 리셋 보정에 쓴다. 서버 경계가 있으면 그쪽이 이긴다.
+    ///   - bounds: 서버 실측이 알려준 창 경계. 로그만으로는 맞출 수 없는 값이다.
+    func makeSnapshot(now: Date = Date(),
+                      config: UsageConfig = .default,
+                      bounds: UsageWindowBounds = .unknown) -> UsageSnapshot {
+        // 집계에 실제로 쓰는 주간 시작점 — 서버가 알려준 주기 시작을 먼저 쓴다.
+        let weeklyStart = bounds.weeklyStart ?? config.weeklyWindowStart(now: now)
+        // 파일 스캔·보관 범위. 주기 시작이 이 범위 밖이면 주기 앞부분이 조용히 누락되므로
+        // 경계보다 한 시간 앞까지 훑는다. 7일은 하한이다 — 5시간 창은 그 안에 늘 들어온다.
+        let scanCutoff = min(now.addingTimeInterval(-ClaudeUsageLimits.weeklyWindow),
+                            weeklyStart.addingTimeInterval(-3600))
 
         let sessionFiles: [URL]
         do {
-            sessionFiles = try discoverSessionFiles(modifiedAfter: weeklyCutoff)
+            sessionFiles = try discoverSessionFiles(modifiedAfter: scanCutoff)
         } catch {
             var snapshot = UsageSnapshot.empty
             snapshot.generatedAt = now
@@ -72,7 +77,7 @@ final class ClaudeUsageReader {
         }
 
         for file in sessionFiles {
-            ingest(file: file, keepingRecordsAfter: weeklyCutoff)
+            ingest(file: file, keepingRecordsAfter: scanCutoff)
         }
         pruneStates(for: sessionFiles)
 
@@ -87,7 +92,7 @@ final class ClaudeUsageReader {
 
         for state in fileStates.values {
             for record in state.records {
-                guard record.timestamp >= weeklyCutoff, record.timestamp <= now else { continue }
+                guard record.timestamp >= scanCutoff, record.timestamp <= now else { continue }
                 guard seen.insert(record.dedupeKey).inserted else { continue }
 
                 // 5시간 창 계산에는 주간 경계와 무관하게 전체를 넘긴다.
@@ -100,8 +105,11 @@ final class ClaudeUsageReader {
             }
         }
 
+        let sessionStart = bounds.sessionStart ?? config.sessionWindowStart(now: now)
         return UsageSnapshot(generatedAt: now,
-                             activeBlock: activeBlock(from: recentRecords, now: now, config: config),
+                             activeBlock: activeBlock(from: recentRecords,
+                                                      now: now,
+                                                      sessionStart: sessionStart),
                              weeklyTokens: weekly,
                              todayTokens: today,
                              weeklyTokensByModel: weeklyByModel,
@@ -113,14 +121,16 @@ final class ClaudeUsageReader {
 
     /// 활동이 5시간 이상 끊기면 새 창이 열린다고 보고, 마지막 창만 반환한다.
     ///
-    /// 설정에 유효한 리셋 시각이 있으면 그 창 하나로 확정한다. 로컬 로그에 없는
-    /// 데스크톱·웹 사용분 때문에 로그만으로는 창 시작이 늦게 잡힌다.
-    private func activeBlock(from records: [UsageRecord], now: Date, config: UsageConfig) -> SessionBlock? {
+    /// 창 시작을 알고 있으면 그 창 하나로 확정한다. 로컬 로그에 없는 데스크톱·웹 사용분
+    /// 때문에 로그만으로는 창 시작이 늦게 잡힌다.
+    private func activeBlock(from records: [UsageRecord],
+                             now: Date,
+                             sessionStart: Date?) -> SessionBlock? {
         guard !records.isEmpty else { return nil }
         let sorted = records.sorted { $0.timestamp < $1.timestamp }
 
-        if let start = config.sessionWindowStart(now: now) {
-            return block(from: sorted, start: start)
+        if let sessionStart {
+            return block(from: sorted, start: sessionStart)
         }
 
         var blockStart: Date?

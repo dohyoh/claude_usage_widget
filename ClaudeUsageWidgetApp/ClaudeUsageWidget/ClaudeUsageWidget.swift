@@ -54,7 +54,8 @@ struct UsageTimelineProvider: TimelineProvider {
             return UsageEntry(date: now, snapshot: shared, config: config, usedSharedSnapshot: true)
         }
 
-        var parsed = ClaudeUsageReader().makeSnapshot(now: now, config: config)
+        var parsed = ClaudeUsageReader().makeSnapshot(now: now, config: config,
+                                                     bounds: server?.localWindowBounds ?? .unknown)
         parsed.server = server
         return UsageEntry(date: now, snapshot: parsed, config: config, usedSharedSnapshot: false)
     }

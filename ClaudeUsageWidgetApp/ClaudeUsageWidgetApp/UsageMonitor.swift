@@ -92,7 +92,9 @@ final class UsageMonitor {
 
     /// 지금 즉시 다시 읽는다. 메뉴의 "새로 고침"이 호출한다.
     func refresh() {
-        var fresh = reader.makeSnapshot(config: config)
+        // 창 경계는 실측이 알려준 리셋 시각에서 온다 — 로그만으로는 맞출 수 없다.
+        var fresh = reader.makeSnapshot(config: config,
+                                        bounds: lastServerUsage?.localWindowBounds ?? .unknown)
         fresh.server = config.showsServerUsage ? lastServerUsage : nil
         snapshot = fresh
         UsageSharedStore.save(fresh)
