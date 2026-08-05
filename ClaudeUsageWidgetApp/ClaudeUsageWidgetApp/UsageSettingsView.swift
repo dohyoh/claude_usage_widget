@@ -176,7 +176,6 @@ struct UsageSettingsView: View {
                     .buttonStyle(.link)
                 }
             }
-            accountMismatch
         } else {
             LabeledContent("연동 계정") {
                 HStack(spacing: 6) {
@@ -184,25 +183,6 @@ struct UsageSettingsView: View {
                     Button("Claude 로그인") { monitor.signIn() }
                 }
             }
-        }
-    }
-
-    /// 로컬 추정과 실측이 서로 다른 계정을 가리킬 때의 경고.
-    ///
-    /// 로컬 추정은 늘 Claude Code 로그(~/.claude/projects)를 세므로, 연동 계정과 Claude Code
-    /// 계정이 다르면 패널의 두 숫자가 다른 계정 것이 된다.
-    @ViewBuilder private var accountMismatch: some View {
-        switch monitor.accountMatch {
-        case .differentAccount, .differentOrganization:
-            let local = monitor.localAccount
-            let name = local?.email ?? local?.organizationName ?? "다른 계정"
-            Label("로컬 추정은 Claude Code 계정(\(name))의 로그입니다. 위 실측과 다른 계정이라 두 숫자를 같이 비교하면 안 됩니다.",
-                  systemImage: "exclamationmark.triangle")
-                .font(.caption)
-                .foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
-        case .same, .unknown:
-            EmptyView()
         }
     }
 

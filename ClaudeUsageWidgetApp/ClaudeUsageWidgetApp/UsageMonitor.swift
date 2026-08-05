@@ -57,7 +57,7 @@ final class UsageMonitor {
     /// 이 로그인이 볼 수 있는 조직 — 설정의 조직 선택이 쓴다.
     private(set) var availableOrganizations: [OrganizationSummary] = []
 
-    /// 실측 계정과 로컬 추정 계정이 같은지. 다르면 패널의 두 숫자가 다른 계정을 가리킨다.
+    /// 실측 계정과 로컬 로그의 계정이 같은지. 다르면 패널의 두 숫자가 다른 계정을 가리킨다.
     var accountMatch: AccountMatch {
         AccountMatch.evaluate(server: serverAccount, local: localAccount)
     }

@@ -2,7 +2,7 @@
 //  ClaudeCodeAccount.swift
 //  ClaudeUsageWidgetApp
 //
-//  로컬 추정(~/.claude/projects 로그)이 어느 계정의 활동인지 알려주는 값.
+//  로컬 토큰 상세(~/.claude/projects 로그)가 어느 계정의 활동인지 알려주는 값.
 //
 //  Claude Code 는 로그인한 계정을 ~/.claude.json 의 `oauthAccount` 에 남긴다. 자격증명이
 //  아니라 신원 정보뿐이라 키체인 접근 없이 읽히고, Claude Code 가 쓸 때마다 갱신된다.
@@ -38,10 +38,11 @@ struct ClaudeCodeAccount: Equatable, Sendable {
     }
 }
 
-/// 실측 계정과 로컬 추정 계정이 같은지.
+/// 실측 계정과 로컬 로그의 계정이 같은지.
 ///
-/// 다르면 패널의 두 숫자가 서로 다른 계정을 가리킨다. 조용히 두면 사용자는 남의 계정
-/// 사용량을 자기 것으로 읽는다.
+/// 다르면 패널의 소진율(실측)과 토큰 상세(로컬 로그)가 서로 다른 계정을 가리킨다. 조회가
+/// 실패하면 사유가 뜨지만 계정이 어긋나면 **숫자가 멀쩡하게 나오므로**, 조용히 두면
+/// 사용자는 남의 계정 활동을 자기 것으로 읽는다.
 enum AccountMatch: Equatable, Sendable {
     /// 한쪽이라도 알 수 없어 비교하지 못했다.
     case unknown

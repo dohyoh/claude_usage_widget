@@ -188,9 +188,7 @@ struct UsagePanel: View {
     /// 서버가 주지 않는 토큰 상세. 창 경계를 아는 창만 줄이 생긴다.
     private var localBreakdown: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Claude Code 로컬 상세")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            localHeader
             if let block = snapshot.activeBlock {
                 detailRow("이번 5시간 창",
                           "\(block.tokens.billable.abbreviatedTokenString) · 요청 \(block.requestCount)회")
@@ -200,6 +198,33 @@ struct UsagePanel: View {
                 detailRow("이번 주기",
                           "\(weekly.billable.abbreviatedTokenString) · 캐시 읽기 \(weekly.cacheRead.abbreviatedTokenString)")
             }
+        }
+    }
+
+    /// 상세의 출처를 적는 줄.
+    ///
+    /// 로컬 로그는 늘 Claude Code 가 로그인한 계정의 활동이다. 그 계정이 위의 실측 계정과
+    /// 다르면 아래 숫자는 다른 계정의 것인데, 숫자 자체는 멀쩡해 보여서 적어 주지 않으면
+    /// 구분할 방법이 없다. 그래서 불일치일 때만 헤더에 계정을 덧붙인다 — 경고 문장을
+    /// 따로 얹지 않고 사실만 둔다.
+    @ViewBuilder private var localHeader: some View {
+        switch monitor.accountMatch {
+        case .differentAccount, .differentOrganization:
+            let local = monitor.localAccount
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Claude Code 로컬 상세 · \(local?.email ?? local?.organizationName ?? "다른 계정")")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .help("위 실측과 다른 계정입니다. 아래 숫자는 이 계정의 Claude Code 로그입니다.")
+        case .same, .unknown:
+            Text("Claude Code 로컬 상세")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
