@@ -5,17 +5,15 @@
 
 import Foundation
 
-/// 하나의 API 요청에서 소비된 토큰과 그 비용.
+/// 하나의 API 요청에서 소비된 토큰.
+///
+/// 로그에 적힌 숫자만 담는다. 비용 환산은 두지 않는다 — 앱이 들고 있는 단가표로 계산한
+/// 추정치이고, 요금제별 실제 청구와 맞는지 확인할 방법이 없다.
 struct TokenCounts: Codable, Hashable, Sendable {
     var input: Int = 0
     var output: Int = 0
     var cacheCreation: Int = 0
     var cacheRead: Int = 0
-    /// 캐시 쓰기는 TTL에 따라 단가가 다르므로 나눠 센다.
-    var cacheCreation1h: Int = 0
-    var cacheCreation5m: Int = 0
-    /// 모델별 단가를 적용해 누적한 USD 비용.
-    var costUSD: Double = 0
 
     /// 캐시 읽기를 제외한 합계.
     var billable: Int { input + output + cacheCreation }
@@ -27,10 +25,7 @@ struct TokenCounts: Codable, Hashable, Sendable {
         TokenCounts(input: lhs.input + rhs.input,
                     output: lhs.output + rhs.output,
                     cacheCreation: lhs.cacheCreation + rhs.cacheCreation,
-                    cacheRead: lhs.cacheRead + rhs.cacheRead,
-                    cacheCreation1h: lhs.cacheCreation1h + rhs.cacheCreation1h,
-                    cacheCreation5m: lhs.cacheCreation5m + rhs.cacheCreation5m,
-                    costUSD: lhs.costUSD + rhs.costUSD)
+                    cacheRead: lhs.cacheRead + rhs.cacheRead)
     }
 
     static func += (lhs: inout TokenCounts, rhs: TokenCounts) {

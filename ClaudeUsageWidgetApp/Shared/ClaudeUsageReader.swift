@@ -228,23 +228,13 @@ final class ClaudeUsageReader {
                   ?? Self.timestampFormatterNoFraction.date(from: timestampString)
         else { return nil }
 
-        let cacheCreation = usage["cache_creation_input_tokens"] as? Int ?? 0
-        // 캐시 쓰기는 TTL별 단가가 다르다. 분해가 없으면 1시간으로 본다 —
-        // Claude Code는 1시간 TTL을 쓰므로 그쪽이 안전한 추정이다.
-        let breakdown = usage["cache_creation"] as? [String: Any]
-        let write1h = breakdown?["ephemeral_1h_input_tokens"] as? Int
-        let write5m = breakdown?["ephemeral_5m_input_tokens"] as? Int
-
-        var tokens = TokenCounts(input: usage["input_tokens"] as? Int ?? 0,
+        let tokens = TokenCounts(input: usage["input_tokens"] as? Int ?? 0,
                                  output: usage["output_tokens"] as? Int ?? 0,
-                                 cacheCreation: cacheCreation,
-                                 cacheRead: usage["cache_read_input_tokens"] as? Int ?? 0,
-                                 cacheCreation1h: write1h ?? (write5m == nil ? cacheCreation : 0),
-                                 cacheCreation5m: write5m ?? 0)
+                                 cacheCreation: usage["cache_creation_input_tokens"] as? Int ?? 0,
+                                 cacheRead: usage["cache_read_input_tokens"] as? Int ?? 0)
         guard tokens.total > 0 else { return nil }
 
         let model = message["model"] as? String ?? "unknown"
-        tokens.costUSD = ModelPricing.cost(model: model, tokens: tokens)
         // requestId 는 재시도·스트리밍으로 여러 줄에 반복되므로 중복 제거 키로 알맞다.
         let dedupeKey = (object["requestId"] as? String)
             ?? (message["id"] as? String)

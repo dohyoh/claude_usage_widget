@@ -100,16 +100,10 @@ struct UsageSettingsView: View {
                 LabeledContent("세션 파일") {
                     Text("\(monitor.snapshot.scannedSessionCount)개")
                 }
-                if let block = monitor.snapshot.activeBlock {
-                    LabeledContent("창 비용 환산") {
-                        Text(String(format: "$%.2f", block.tokens.costUSD))
-                            .monospacedDigit()
-                    }
-                }
             } header: {
                 Text("진단")
             } footer: {
-                Text("로컬 추정은 ~/.claude 로그(Claude Code)만 봅니다. 데스크톱·웹 사용분은 로그에 없어 로컬 추정에서는 빠지지만, 위의 claude.ai 실측에는 포함됩니다.")
+                Text("토큰 상세는 ~/.claude 로그(Claude Code)만 봅니다. 데스크톱·웹 사용분은 로그에 없어 상세에서는 빠지지만, 위의 claude.ai 실측 소진율에는 포함됩니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
