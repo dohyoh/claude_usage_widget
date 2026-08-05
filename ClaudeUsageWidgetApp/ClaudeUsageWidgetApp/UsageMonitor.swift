@@ -232,9 +232,6 @@ final class UsageMonitor {
         UsageSeverity(ratio: sessionWindow?.ratio ?? 0)
     }
 
-    /// 캘리브레이션 시 기준이 되는 현재 측정값.
-    var currentSessionValue: Double { snapshot.sessionValue(for: config.metric) }
-
     /// 위젯이 그리는 값(실측 백분율과 실패 사유)이 바뀌었을 때만 위젯을 깨운다.
     ///
     /// 로컬 상세는 메뉴바 패널에만 나오므로 위젯 갱신 조건에 넣지 않는다.

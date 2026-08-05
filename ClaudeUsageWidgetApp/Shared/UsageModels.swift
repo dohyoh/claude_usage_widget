@@ -36,74 +36,6 @@ struct TokenCounts: Codable, Hashable, Sendable {
     static func += (lhs: inout TokenCounts, rhs: TokenCounts) {
         lhs = lhs + rhs
     }
-
-    /// 선택한 측정 방식에 해당하는 값.
-    func value(for metric: UsageMetric) -> Double {
-        switch metric {
-        case .billableTokens: return Double(billable)
-        case .totalTokens: return Double(total)
-        case .costUSD: return costUSD
-        }
-    }
-}
-
-/// 한도 소진율을 무엇으로 재는가.
-///
-/// Claude는 실제 한도 산정식을 공개하지 않는다. 세 방식 중 하나를 고르고
-/// 설정에서 캘리브레이션하면 실제 표시와 맞출 수 있다.
-enum UsageMetric: String, Codable, CaseIterable, Sendable {
-    /// 입력 + 출력 + 캐시 쓰기. 캐시 읽기를 제외한다.
-    case billableTokens
-    /// 캐시 읽기까지 포함한 모든 토큰.
-    case totalTokens
-    /// 모델별 단가를 적용한 USD 비용. 캐시 읽기의 낮은 단가가 반영된다.
-    case costUSD
-
-    var title: String {
-        switch self {
-        case .billableTokens: return "토큰 (캐시 읽기 제외)"
-        case .totalTokens: return "토큰 (전체)"
-        case .costUSD: return "비용 환산 (USD)"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .billableTokens: return "입력 + 출력 + 캐시 쓰기"
-        case .totalTokens: return "캐시 읽기까지 모두 합산"
-        case .costUSD: return "모델별 단가 적용 · 캐시 읽기는 입력의 1/10"
-        }
-    }
-
-    /// 한도 입력 칸에 붙는 단위.
-    var unit: String { self == .costUSD ? "USD" : "토큰" }
-
-    /// 화면에 값을 표시하는 방법.
-    func format(_ value: Double) -> String {
-        switch self {
-        case .costUSD:
-            return String(format: "$%.2f", value)
-        case .billableTokens, .totalTokens:
-            return Int(value).abbreviatedTokenString
-        }
-    }
-
-    /// 이 방식의 기본 추정 한도. 어디까지나 출발점이며 캘리브레이션이 필요하다.
-    var defaultSessionLimit: Double {
-        switch self {
-        case .billableTokens: return 2_000_000
-        case .totalTokens: return 70_000_000
-        case .costUSD: return 60
-        }
-    }
-
-    var defaultWeeklyLimit: Double {
-        switch self {
-        case .billableTokens: return 30_000_000
-        case .totalTokens: return 1_000_000_000
-        case .costUSD: return 900
-        }
-    }
 }
 
 /// 5시간 롤링 한도 창(window) 한 개.
@@ -281,11 +213,6 @@ struct UsageSnapshot: Codable, Hashable, Sendable {
     var usableServerUsage: ServerUsage? {
         guard let server, server.isUsable else { return nil }
         return server
-    }
-
-    /// 진행 중인 창의 측정값. 캘리브레이션 입력이 기준으로 쓴다.
-    func sessionValue(for metric: UsageMetric) -> Double {
-        activeBlock?.tokens.value(for: metric) ?? 0
     }
 }
 
