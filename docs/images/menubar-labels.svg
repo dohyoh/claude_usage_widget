@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 290" width="720" height="290"
+     font-family="-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', 'Noto Sans KR', sans-serif">
+  <rect width="720" height="290" rx="16" fill="#171614"/>
+  <text x="32" y="38" fill="#A9A29A" font-size="13" letter-spacing="0.4">숫자 배치 — 설정에 따라 아이콘 양옆에 붙습니다</text>
+  <text x="32" y="58" fill="#6E675E" font-size="11">왼쪽은 5시간 창 소진율 고정 · 오른쪽은 켠 항목에 따라 한 줄 또는 두 줄</text>
+
+  <!-- 행 1: 기본 -->
+  <text x="32" y="102" fill="#6E675E" font-size="11">(기본)</text>
+  <rect x="150" y="84" width="200" height="30" rx="7" fill="#2C2926"/>
+  <text x="172" y="104" fill="#FBF8F3" font-size="13" font-weight="600">62%</text>
+  <circle cx="222" cy="99" r="9" fill="none" stroke="#3A3632" stroke-width="2.5"/>
+  <circle cx="222" cy="99" r="9" fill="none" stroke="#D97757" stroke-width="2.5" stroke-linecap="round"
+          stroke-dasharray="35.06 56.55" transform="rotate(-90 222 99)"/>
+  <text x="380" y="103" fill="#6E675E" font-size="11">소진율만</text>
+
+  <!-- 행 2: 주간 -->
+  <text x="32" y="152" fill="#6E675E" font-size="11">주간 소진율</text>
+  <rect x="150" y="134" width="200" height="30" rx="7" fill="#2C2926"/>
+  <text x="172" y="154" fill="#FBF8F3" font-size="13" font-weight="600">62%</text>
+  <circle cx="222" cy="149" r="9" fill="none" stroke="#3A3632" stroke-width="2.5"/>
+  <circle cx="222" cy="149" r="9" fill="none" stroke="#D97757" stroke-width="2.5" stroke-linecap="round"
+          stroke-dasharray="35.06 56.55" transform="rotate(-90 222 149)"/>
+  <text x="240" y="154" fill="#A9A29A" font-size="12">주 39%</text>
+  <text x="380" y="153" fill="#6E675E" font-size="11">주간 한도까지 얼마나 왔는지</text>
+
+  <!-- 행 3: 남은 시간 -->
+  <text x="32" y="202" fill="#6E675E" font-size="11">리셋까지 남은 시간</text>
+  <rect x="150" y="184" width="200" height="30" rx="7" fill="#2C2926"/>
+  <text x="172" y="204" fill="#FBF8F3" font-size="13" font-weight="600">62%</text>
+  <circle cx="222" cy="199" r="9" fill="none" stroke="#3A3632" stroke-width="2.5"/>
+  <circle cx="222" cy="199" r="9" fill="none" stroke="#D97757" stroke-width="2.5" stroke-linecap="round"
+          stroke-dasharray="35.06 56.55" transform="rotate(-90 222 199)"/>
+  <text x="240" y="204" fill="#A9A29A" font-size="12">2h 14m</text>
+  <text x="380" y="203" fill="#6E675E" font-size="11">이 창이 언제 풀리는지</text>
+
+  <!-- 행 4: 둘 다 -->
+  <text x="32" y="252" fill="#6E675E" font-size="11">둘 다</text>
+  <rect x="150" y="234" width="200" height="30" rx="7" fill="#2C2926"/>
+  <text x="172" y="254" fill="#FBF8F3" font-size="13" font-weight="600">62%</text>
+  <circle cx="222" cy="249" r="9" fill="none" stroke="#3A3632" stroke-width="2.5"/>
+  <circle cx="222" cy="249" r="9" fill="none" stroke="#D97757" stroke-width="2.5" stroke-linecap="round"
+          stroke-dasharray="35.06 56.55" transform="rotate(-90 222 249)"/>
+  <text x="240" y="247" fill="#A9A29A" font-size="9">주 39%</text>
+  <text x="240" y="259" fill="#A9A29A" font-size="9">2h 14m</text>
+  <text x="380" y="248" fill="#6E675E" font-size="11">한 줄로 늘이지 않고 글자를 줄여</text>
+  <text x="380" y="261" fill="#6E675E" font-size="11">위아래로 쌓습니다 — 폭을 아끼려고</text>
+</svg>

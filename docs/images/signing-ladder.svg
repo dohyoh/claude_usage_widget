@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 330" width="840" height="330"
+     font-family="-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', 'Noto Sans KR', sans-serif">
+  <rect width="840" height="330" rx="16" fill="#171614"/>
+  <text x="32" y="38" fill="#A9A29A" font-size="13" letter-spacing="0.4">보유한 자격에 따라 달라지는 것</text>
+  <text x="32" y="58" fill="#6E675E" font-size="11">package.sh 는 있는 자격만 자동으로 씁니다 — 없다고 실패하지 않습니다</text>
+
+  <text x="48" y="86" fill="#6E675E" font-size="10">자격</text>
+  <text x="246" y="86" fill="#6E675E" font-size="10">하는 일</text>
+  <text x="520" y="86" fill="#6E675E" font-size="10">받는 사람 경험</text>
+
+  <!-- 1 -->
+  <rect x="32" y="96" width="776" height="46" rx="10" fill="#232120"/>
+  <rect x="32" y="96" width="4" height="46" rx="2" fill="#6E675E"/>
+  <text x="48" y="124" fill="#A9A29A" font-size="12">없음</text>
+  <text x="246" y="124" fill="#A9A29A" font-size="11.5">ad-hoc 서명 그대로 DMG</text>
+  <text x="520" y="117" fill="#E0A33E" font-size="11.5">Gatekeeper 우회 필요</text>
+  <text x="520" y="132" fill="#6E675E" font-size="10">Cask caveats 에 안내가 자동 포함됩니다</text>
+
+  <!-- 2 -->
+  <rect x="32" y="150" width="776" height="46" rx="10" fill="#232120"/>
+  <rect x="32" y="150" width="4" height="46" rx="2" fill="#5C999E"/>
+  <text x="48" y="171" fill="#FBF8F3" font-size="12" font-weight="600">Apple Development</text>
+  <text x="48" y="186" fill="#5C999E" font-size="9.5">현재 이 프로젝트</text>
+  <text x="246" y="171" fill="#A9A29A" font-size="11.5">서명 + Hardened Runtime</text>
+  <text x="246" y="186" fill="#6E675E" font-size="10">무료 계정으로도 발급 — 코드 신원이 안정됩니다</text>
+  <text x="520" y="178" fill="#E0A33E" font-size="11.5">그대로 — 공증이 없으므로 우회 필요</text>
+
+  <!-- 3 -->
+  <rect x="32" y="204" width="776" height="46" rx="10" fill="#232120"/>
+  <rect x="32" y="204" width="4" height="46" rx="2" fill="#E89870"/>
+  <text x="48" y="232" fill="#FBF8F3" font-size="12" font-weight="600">Developer ID</text>
+  <text x="246" y="232" fill="#A9A29A" font-size="11.5">서명 + Hardened Runtime</text>
+  <text x="520" y="232" fill="#E0A33E" font-size="11.5">여전히 공증 경고</text>
+
+  <!-- 4 -->
+  <rect x="32" y="258" width="776" height="46" rx="10" fill="#2A2420"/>
+  <rect x="32" y="258" width="4" height="46" rx="2" fill="#D97757"/>
+  <text x="48" y="286" fill="#FBF8F3" font-size="12" font-weight="600">+ 공증 프로필</text>
+  <text x="246" y="286" fill="#A9A29A" font-size="11.5">공증(notarize) + 스테이플</text>
+  <text x="520" y="286" fill="#D97757" font-size="11.5" font-weight="600">경고 없이 바로 실행</text>
+
+  <text x="32" y="322" fill="#6E675E" font-size="10">Apple Development 로 서명한 빌드는 공증할 수 없으므로, NOTARY_PROFILE 을 줬더라도 공증 단계를 건너뜁니다.</text>
+</svg>
