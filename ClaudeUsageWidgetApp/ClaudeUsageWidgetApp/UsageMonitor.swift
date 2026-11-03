@@ -19,7 +19,10 @@ final class UsageMonitor {
         didSet {
             guard config != oldValue else { return }
             UsageSharedStore.save(config)
+            // 쿠키 원본이 바뀌면 다른 세션으로 보게 되므로 주기를 기다리지 않고 바로 조회한다.
+            let sourceChanged = config.cookieSource != oldValue.cookieSource
             refresh()
+            if sourceChanged { maybeFetchServer(force: true) }
             reloadWidget(force: true)
         }
     }
@@ -32,6 +35,11 @@ final class UsageMonitor {
 
     private let reader = ClaudeUsageReader()
     private var timer: Timer?
+    /// 브라우저 로그인을 지켜보는 작업. 다시 로그인을 누르면 이전 것을 버린다.
+    private var signInWatch: Task<Void, Never>?
+    /// 브라우저 로그인을 얼마나, 얼마 간격으로 지켜볼지.
+    private static let signInWatchDuration: TimeInterval = 5 * 60
+    private static let signInWatchInterval: TimeInterval = 3
     private var lastWidgetReload: Date = .distantPast
     private var lastPublishedSignature: Int?
 
@@ -46,6 +54,9 @@ final class UsageMonitor {
     /// 5초 갱신마다 읽으면 50KB 넘는 파일을 계속 파싱하게 되므로 시작할 때와 수동
     /// 새로고침에서만 읽는다. Claude Code 계정이 바뀌는 일은 드물다.
     private(set) var localAccount: ClaudeCodeAccount?
+
+    /// 마지막 조회에서 세션을 실제로 쓴 소스의 이름. 설정의 상태 표시에 쓴다.
+    private(set) var serverSourceName: String?
 
     init() {
         self.config = UsageSharedStore.loadConfig()
@@ -62,12 +73,68 @@ final class UsageMonitor {
         AccountMatch.evaluate(server: serverAccount, local: localAccount)
     }
 
-    /// 로그인 창을 띄운다. 세션을 확보하면 곧바로 다시 조회한다.
+    /// 로그인·계정 선택을 시작한다. 쿠키를 읽을 수 있는 브라우저가 기본이면 **늘 거기서** 한다.
+    ///
+    /// 평소 쓰는 브라우저에서 계정을 고르는 것이 자연스럽고, 이미 claude.ai 에 로그인해 둔
+    /// 브라우저라면 고를 것도 없이 그 세션을 바로 쓸 수 있다. 그래서 세 가지를 한 번에 한다:
+    ///
+    ///   1. 쿠키 원본을 기본 브라우저로 고정한다 — 브라우저에서 고른 계정이 실제로 쓰이도록.
+    ///   2. 곧바로 한 번 조회한다 — 브라우저에 이미 세션이 있으면 여기서 끝난다.
+    ///   3. 브라우저를 열고, 거기서 로그인이 끝나는지 잠깐 지켜본다(`watchForBrowserSignIn`).
+    ///
+    /// 쿠키를 읽을 수 없는 브라우저(Safari)가 기본이면 앱 안의 로그인 창 말고는 길이 없다.
     func signIn() {
-        ClaudeLoginWindowController.shared.present { [weak self] signedIn in
-            guard signedIn else { return }
-            self?.refreshAll()
+        guard let source = BrowserCookieSource.defaultBrowser()?.source, source.isSupported else {
+            ClaudeLoginWindowController.shared.present { [weak self] signedIn in
+                guard signedIn else { return }
+                self?.refreshAll()
+            }
+            return
         }
+
+        config.cookieSourceID = CookieSourceSelection.defaultBrowser
+        refreshAll()
+        ClaudeLogin.openInDefaultBrowser()
+        watchForBrowserSignIn(source: source)
+    }
+
+    /// 로그인이 기본 브라우저로 열리는지 — 설정 화면의 버튼 이름에 쓴다.
+    var signsInWithBrowser: Bool {
+        BrowserCookieSource.defaultBrowser()?.source?.isSupported ?? false
+    }
+
+    /// 브라우저에서 로그인이 끝나길 기다리는 중인지 — 설정 화면의 안내에 쓴다.
+    private(set) var isWaitingForBrowserSignIn = false
+
+    /// 브라우저에서 로그인이 끝나는지 잠깐 지켜본다.
+    ///
+    /// 브라우저는 로그인이 끝났다는 신호를 앱에 주지 않는다. 그래서 세션 쿠키의 지문이
+    /// 생기거나 바뀔 때까지 짧은 간격으로 확인하고, 달라지면 곧바로 조회한다. 지문만 비교하니
+    /// 세션 값 자체는 여기로 흘러나오지 않는다.
+    ///
+    /// 사용자가 로그인하지 않고 창을 닫아 버릴 수도 있으므로 영원히 돌지 않고 스스로 멈춘다.
+    private func watchForBrowserSignIn(source: BrowserCookieSource) {
+        signInWatch?.cancel()
+        isWaitingForBrowserSignIn = true
+        signInWatch = Task { @MainActor [weak self] in
+            defer { self?.isWaitingForBrowserSignIn = false }
+            let before = await Self.browserSessionFingerprint(source)
+            let deadline = Date().addingTimeInterval(Self.signInWatchDuration)
+            while !Task.isCancelled, Date() < deadline {
+                try? await Task.sleep(for: .seconds(Self.signInWatchInterval))
+                guard !Task.isCancelled else { return }
+                let now = await Self.browserSessionFingerprint(source)
+                guard let now, now != before else { continue }
+                self?.refreshAll()
+                return
+            }
+        }
+    }
+
+    /// 브라우저에 있는 세션 쿠키의 지문. 로그인하지 않았으면 nil.
+    private static func browserSessionFingerprint(_ source: BrowserCookieSource) async -> String? {
+        guard case .found(let jar) = await ClaudeSessionSource.browser(source).jar() else { return nil }
+        return jar.sessionFingerprint
     }
 
     func start() {
@@ -84,6 +151,8 @@ final class UsageMonitor {
     func stop() {
         timer?.invalidate()
         timer = nil
+        signInWatch?.cancel()
+        signInWatch = nil
     }
 
     /// 지금 즉시 다시 읽는다. 메뉴의 "새로 고침"이 호출한다.
@@ -150,6 +219,7 @@ final class UsageMonitor {
         // 조직 목록은 조회에 성공했을 때만 갈아 끼운다. 일시적 실패로 설정의 선택지를
         // 비워 버리면 사용자가 고른 조직이 사라진 것처럼 보인다.
         if !result.organizations.isEmpty { availableOrganizations = result.organizations }
+        serverSourceName = result.sourceName
         lastServerUsage = result.usage
         // 실측이 창 경계를 알려주므로 로컬 집계도 함께 다시 만든다 — 경계가 바뀌면
         // 그 창의 요청 수·토큰도 달라진다.

@@ -67,6 +67,7 @@ struct UsageSettingsView: View {
             }
 
             Section {
+                cookieSourcePicker
                 account
                 organizationPicker
                 Picker("갱신 주기", selection: Binding(
@@ -85,7 +86,7 @@ struct UsageSettingsView: View {
             } header: {
                 Text("실측 사용량 (claude.ai)")
             } footer: {
-                Text("앱 안의 로그인 창에서 claude.ai에 로그인하면 그 계정 전체(코드·데스크톱·웹)의 실측 소진율을 가져옵니다. 세션은 앱의 웹 저장소에 남아 다시 켜도 유지되고, 만료되면(대략 4주) 다시 로그인하라고 알립니다. Claude 데스크톱 앱은 필요하지 않고, 키체인 접근 허용 창도 뜨지 않습니다.")
+                Text("claude.ai에 로그인한 세션으로 그 계정 전체(코드·데스크톱·웹)의 실측 소진율을 가져옵니다. 연동 계정의 버튼은 시스템 기본 브라우저에서 claude.ai를 열어 거기서 계정을 고르게 합니다 — 그 브라우저에 이미 로그인돼 있으면 고를 것도 없이 바로 가져오고, 지금 로그인하면 끝나는 즉시 자동으로 가져옵니다(«지금 다시 조회»를 누르지 않아도 됩니다). 지원 브라우저는 Chromium 계열(Chrome·Edge·Brave·웨일·Arc·Vivaldi)과 Firefox이고, 브라우저 쿠키를 처음 읽을 때 키체인 접근 허용 창이 한 번 뜹니다. Safari는 쿠키가 전체 디스크 접근이 필요한 형식이라 읽을 수 없어, Safari가 기본 브라우저면 앱 안의 로그인 창으로 넘어갑니다. «쿠키 원본»은 세션을 어디서 읽을지 직접 고를 때 씁니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -162,15 +163,60 @@ struct UsageSettingsView: View {
         ("주황", "#FF9F0A"),
     ]
 
-    /// 연동 계정 — 로그인 여부와 계정 표시, 계정 바꾸기.
+    /// 쿠키 원본 — claude.ai 세션을 어디서 읽을지.
+    ///
+    /// 목록에는 «자동»·«앱 안의 로그인 창»·«기본 브라우저»와, 이 컴퓨터에 쿠키 저장소가 있는
+    /// 브라우저만 올린다. 저장해 둔 선택이 목록에 없으면(브라우저를 지웠거나 기본 브라우저를
+    /// 바꿨을 때) 그 항목도 함께 올려 Picker 가 아무것도 고르지 않은 상태가 되지 않게 한다.
+    @ViewBuilder private var cookieSourcePicker: some View {
+        let browser = BrowserCookieSource.defaultBrowser()
+        Picker("쿠키 원본", selection: Binding(
+            get: { config.cookieSource },
+            set: { monitor.config.cookieSourceID = $0 }
+        )) {
+            ForEach(cookieSourceOptions(browser: browser), id: \.id) { option in
+                Text(option.title).tag(option.id)
+            }
+        }
+    }
+
+    private func cookieSourceOptions(browser: DefaultBrowser?) -> [(id: String, title: String)] {
+        var options: [(id: String, title: String)] = [
+            (CookieSourceSelection.auto,
+             CookieSourceSelection.title(for: CookieSourceSelection.auto, browser: browser)),
+            (CookieSourceSelection.app,
+             CookieSourceSelection.title(for: CookieSourceSelection.app, browser: browser)),
+        ]
+        if let source = browser?.source, source.isSupported {
+            options.append((CookieSourceSelection.defaultBrowser,
+                            CookieSourceSelection.title(for: CookieSourceSelection.defaultBrowser,
+                                                        browser: browser)))
+        }
+        for source in BrowserCookieSource.all where source.isSupported && source.isPresent {
+            options.append((source.id, source.displayName))
+        }
+        if !options.contains(where: { $0.id == config.cookieSource }) {
+            options.append((config.cookieSource,
+                            CookieSourceSelection.title(for: config.cookieSource, browser: browser)))
+        }
+        return options
+    }
+
+    /// 연동 계정 — 로그인 여부와 계정 표시, 계정 선택·재조회.
+    ///
+    /// 로그인·계정 선택은 기본 브라우저에서 한다. 쿠키를 읽을 수 없는 브라우저(Safari)가
+    /// 기본일 때만 앱 안의 로그인 창으로 간다.
     @ViewBuilder private var account: some View {
+        let browserSignIn = monitor.signsInWithBrowser
         if let server = monitor.serverAccount {
             LabeledContent("연동 계정") {
                 HStack(spacing: 6) {
                     Text(server.email ?? server.organizationName ?? "로그인됨")
                         .lineLimit(1)
-                    Button("다른 계정") {
-                        monitor.signOut()
+                    // 브라우저 세션은 앱이 끊을 수 없다 — 계정을 바꾸려면 그 브라우저에서
+                    // 고르면 되고, 앱 세션일 때만 저장소를 비우고 새로 로그인한다.
+                    Button(browserSignIn ? "계정 선택" : "다른 계정") {
+                        if !browserSignIn { monitor.signOut() }
                         monitor.signIn()
                     }
                     .buttonStyle(.link)
@@ -180,8 +226,26 @@ struct UsageSettingsView: View {
             LabeledContent("연동 계정") {
                 HStack(spacing: 6) {
                     Text("로그인하지 않음").foregroundStyle(.secondary)
-                    Button("Claude 로그인") { monitor.signIn() }
+                    Button(browserSignIn ? "기본 브라우저로 로그인" : "Claude 로그인") {
+                        monitor.signIn()
+                    }
                 }
+            }
+        }
+        LabeledContent("세션") {
+            HStack(spacing: 6) {
+                if monitor.isWaitingForBrowserSignIn {
+                    ProgressView().controlSize(.small)
+                    Text("브라우저에서 로그인하면 자동으로 가져옵니다")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text(monitor.serverSourceName ?? "아직 읽지 않음")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Button("지금 다시 조회") { monitor.refreshAll() }
+                    .buttonStyle(.link)
             }
         }
     }

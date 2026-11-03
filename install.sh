@@ -130,7 +130,8 @@ sleep 2
 if pgrep -f "$DEST/Contents/MacOS/ClaudeUsageWidgetApp" > /dev/null; then
     echo
     echo "설치 완료. 메뉴바에 아이콘이 나타났습니다."
-    echo "  · 실측 사용량: 메뉴바 → ⚙︎ 설정 → 실측 사용량 (claude.ai) → «Claude 로그인»"
+    echo "  · 실측 사용량: 메뉴바 → ⚙︎ 설정 → 실측 사용량 (claude.ai) → 연동 계정"
+    echo "                 기본 브라우저에서 claude.ai 가 열립니다. 이미 로그인돼 있으면 바로 연동됩니다."
     echo "  · 로그인 시 자동 실행: 메뉴바 → 한도 설정 → 실행"
     echo "  · 위젯 추가: 데스크톱 우클릭 → 위젯 편집 → \"Claude Code 사용량\""
 else

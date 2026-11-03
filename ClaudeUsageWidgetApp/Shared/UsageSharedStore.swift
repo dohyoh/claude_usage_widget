@@ -30,6 +30,13 @@ struct UsageConfig: Codable, Hashable, Sendable {
     /// 이전 버전 설정 파일에 이 키가 없어도 디코딩이 깨지지 않게 Optional로 둔다.
     var organizationUuid: String?
 
+    /// claude.ai 세션을 어디서 가져올지.
+    ///
+    /// `"auto"`(앱 세션 → 기본 브라우저), `"app"`, `"default-browser"`, 또는 특정 브라우저
+    /// id(`"chrome"` …). 해석은 메뉴바 앱 쪽 `ClaudeSessionSource` 가 하고, 위젯은 쓰지 않는다.
+    /// 이전 버전 설정 파일에 키가 없어도 되도록 Optional 로 둔다.
+    var cookieSourceID: String?
+
     /// 메뉴바 라벨에 주간 소진율을 함께 표시할지. nil = 꺼짐.
     ///
     /// 메뉴바는 폭이 곧 다른 앱의 자리라 기본은 5시간 창 하나만 둔다. 이전 버전 설정
@@ -72,6 +79,9 @@ struct UsageConfig: Codable, Hashable, Sendable {
 
     /// 자동 갱신 없이 수동으로만 조회하는 모드인지.
     var serverRefreshIsManual: Bool { serverRefreshInterval <= 0 }
+
+    /// 쿠키 원본 선택값. 설정이 없으면 자동.
+    var cookieSource: String { cookieSourceID ?? "auto" }
 }
 
 enum UsageSharedStore {
