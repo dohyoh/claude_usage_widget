@@ -22,14 +22,60 @@ macOS 메뉴바와 알림센터 위젯에서 **Claude 사용량**(5시간 한도
 
 ---
 
-## 🔓 실측 사용량 — 자체 로그인으로 계정 전체 사용량 불러오기
+## 🔓 실측 사용량 — 로그인 세션으로 계정 전체 사용량 불러오기
 
-앱 안의 로그인 창(`WKWebView`)에서 `claude.ai`에 직접 로그인하고, 그 세션으로 서버가 계산한 실제 사용량을 받아옵니다. **Claude 데스크톱 앱이 필요하지 않고, 키체인도 쓰지 않습니다.**
+`claude.ai`에 로그인한 세션으로 서버가 계산한 실제 사용량을 받아옵니다. 세션은 두 곳에서 올 수 있고, 설정의 **쿠키 원본**에서 고릅니다. **Claude 데스크톱 앱은 어느 쪽에도 필요하지 않습니다.**
 
-### 세션 확보
+### 로그인·계정 선택은 기본 브라우저에서
+
+설정 → 실측 사용량 (claude.ai) → **연동 계정**의 버튼이 시스템 기본 브라우저에서 `claude.ai`를 엽니다. 평소 쓰는 브라우저에서 계정을 고르면 그 세션을 그대로 씁니다. 앱은 자기 로그인 창을 띄우지 않습니다.
+
+버튼 하나가 세 가지를 합니다:
 
 ```
-1. 설정 → 실측 사용량 (claude.ai) → «Claude 로그인»
+1. 쿠키 원본을 «기본 브라우저» 로 고정한다      — 브라우저에서 고른 계정이 실제로 쓰이도록
+2. 곧바로 한 번 조회한다                        — 이미 로그인돼 있으면 여기서 끝
+3. 브라우저를 열고 로그인이 끝나는지 지켜본다    — 끝나면 자동으로 가져온다 (최대 5분, 3초 간격)
+```
+
+- `NSWorkspace.open`이 LaunchServices에 맡기므로 **사용자가 기본으로 지정한 브라우저**가 그대로 열립니다.
+- 브라우저는 로그인이 끝났다는 신호를 앱에 주지 않습니다. 그래서 세션 쿠키의 **지문**(`sessionFingerprint`)이 생기거나 바뀔 때까지 짧은 간격으로 확인합니다. 지문만 비교하므로 세션 값 자체는 그 경로로 흘러나오지 않습니다.
+- **Safari가 기본 브라우저면** 쿠키를 읽을 수 없으므로 앱 안의 로그인 창으로 넘어갑니다. 그때만 `WKWebView` 창이 뜹니다.
+
+### 쿠키 원본 — 세션을 어디서 읽을지
+
+| 선택 | 세션을 읽는 곳 |
+| --- | --- |
+| **자동** (기본) | 앱 세션 → 만료(401)되면 기본 브라우저 |
+| 앱 안의 로그인 창 | `WKWebsiteDataStore` |
+| 기본 브라우저 | 그 브라우저의 쿠키 저장소 |
+| 특정 브라우저 | 고른 브라우저의 쿠키 저장소 |
+
+연동 계정 버튼으로 로그인하면 원본이 «기본 브라우저» 로 바뀌므로, 보통은 이 설정을 직접 건드릴 일이 없습니다.
+
+**«자동»이 앱 세션을 먼저 보는 이유**: 브라우저를 먼저 보면, 이미 앱에 A계정을 연동해 둔 사용자가 브라우저의 B계정으로 조용히 바뀝니다. 앱 세션이 **401을 받을 때만** 브라우저로 넘어가므로, 소스 전환은 재로그인이 필요한 순간이나 사용자가 직접 로그인 버튼을 눌렀을 때만 일어납니다. 일시적 실패(429·5xx)에는 소스를 바꾸지 않습니다 — 그러면 보이는 계정이 네트워크 사정에 따라 흔들립니다.
+
+**지원 브라우저**: Chromium 계열(Chrome·Edge·Brave·네이버 웨일·Arc·Vivaldi·Chromium)과 Firefox.
+
+```
+Chromium:  ~/Library/Application Support/<브랜드>/<프로필>/Cookies   (SQLite, 값은 암호화)
+  1. 키체인의 "<브랜드> Safe Storage" 항목이 base64 문자열 키
+  2. PBKDF2-HMAC-SHA1(key, salt="saltysalt", 반복 1003회, 16바이트)
+  3. AES-128-CBC, IV = 공백 16바이트 — encrypted_value 에서 "v10"/"v11" 접두사를 뺀 본문
+  4. 최신 Chromium 은 평문 앞에 sha256(host_key) 32바이트를 붙인다 → 있으면 떼어낸다
+Firefox:   ~/Library/Application Support/Firefox/Profiles/<프로필>/cookies.sqlite  (평문)
+```
+
+- 브라우저 쿠키를 처음 읽을 때 **키체인 접근 허용 창이 한 번** 뜹니다(«항상 허용»). 복호화 키는 앱 실행당 브라우저별로 한 번만 유도해 메모리에 캐시합니다.
+- 프로필이 여러 개면(`Default`, `Profile 1` …) 최근에 쓴 프로필부터 보며 세션 쿠키가 있는 첫 프로필을 씁니다.
+- 브라우저가 쥔 파일을 잠그지 않도록 사본을 떠서 읽고, 방금 받은 쿠키가 아직 `-wal`에만 있을 수 있어 곁다리 파일도 함께 복사합니다.
+- **Safari는 지원하지 않습니다.** 쿠키가 전체 디스크 접근(TCC) 권한이 필요한 `binarycookies` 형식이라 읽을 수 없습니다. Safari가 기본 브라우저면 «자동»은 앱 세션만 쓰고, «기본 브라우저»를 고르면 그 사유를 그대로 알립니다.
+- **UA는 쿠키를 꺼낸 곳에 맞춥니다.** `cf_clearance`가 UA에 묶여 있어서, 브라우저 쿠키를 웹뷰의 Safari UA로 보내면 같은 쿠키인데도 Cloudflare 챌린지를 받을 수 있습니다. 그래서 `ClaudeCookieJar`가 UA를 쿠키와 함께 들고 다니고, Chromium 계열이면 설치된 그 브라우저의 실제 메이저 버전으로 Chrome UA를 만듭니다. (TLS 지문까지 맞추지는 못하므로, 앱 로그인 창 쪽이 Cloudflare 관점에서는 여전히 더 안전합니다.)
+
+### 앱 로그인 창으로 세션 확보 (Safari가 기본이거나 직접 골랐을 때)
+
+```
+1. 설정 → 실측 사용량 (claude.ai) → 쿠키 원본을 «앱 안의 로그인 창» 으로 두고 «Claude 로그인»
 2. 앱 안의 로그인 창에서 사용자가 직접 로그인 (이메일 코드 / Google SSO)
 3. 세션 쿠키가 생기면 창이 자동으로 닫힌다
 4. 세션은 WKWebsiteDataStore(persistent)에 남아 앱을 다시 켜도 유지된다 (대략 4주)
@@ -45,7 +91,8 @@ macOS 메뉴바와 알림센터 위젯에서 **Claude 사용량**(5시간 한도
 
 ```
 GET https://claude.ai/api/organizations/{org_uuid}/usage
-Cookie: <웹뷰 저장소의 claude.ai 쿠키 전체>
+Cookie: <고른 쿠키 원본의 claude.ai 쿠키 전체>
+User-Agent: <그 쿠키를 꺼낸 곳의 UA>
 ```
 
 ```jsonc
@@ -98,7 +145,7 @@ Cookie: <웹뷰 저장소의 claude.ai 쿠키 전체>
 - **앱을 지우면 세션도 지웁니다**: `./uninstall.sh` 는 설정과 달리 `--purge` 없이도 웹 저장소를 지웁니다 — 앱을 지웠는데 로그인이 디스크에 남아 있으면 안 되기 때문입니다. Homebrew 는 `brew uninstall --zap` 을 쓰세요.
 - **조회 주기 설정**: 설정 → 실측 사용량 (claude.ai) → **갱신 주기** 에서 30초·1분(기본)·3분·5분·10분·30분·**수동** 중 고릅니다. '수동'은 앱 시작 때 1회만 가져오고 이후엔 패널의 새로고침 버튼으로만 갱신합니다.
 - **세션이 만료되면**(401/403) 다시 로그인하라고 알립니다. 429·5xx 는 일시적 실패로 보고 재로그인을 요구하지 않습니다 — 멀쩡한 세션을 버리게 만들면 안 됩니다.
-- **조회를 멈추려면 로그아웃합니다**: 설정 → 실측 사용량 (claude.ai) → 연동 계정의 «다른 계정» 이 웹 저장소와 계정 캐시를 비웁니다. 표시만 끄는 토글은 두지 않습니다 — 소진율의 출처가 이것뿐이라 끄면 빈 화면이 남고, 정말 끄고 싶을 때는 로그아웃이 더 확실합니다.
+- **계정을 바꾸려면**: 설정 → 실측 사용량 (claude.ai) → 연동 계정의 «계정 선택» 이 브라우저를 엽니다. 브라우저 세션은 앱이 끊을 수 없으므로(그 브라우저의 로그인입니다) 계정 전환도 거기서 합니다. 앱 안의 로그인 창을 쓰는 중이면 버튼이 «다른 계정» 이고, 웹 저장소와 계정 캐시를 비운 뒤 다시 로그인합니다. 표시만 끄는 토글은 두지 않습니다 — 소진율의 출처가 이것뿐이라 끄면 빈 화면이 남습니다. 표시만 끄는 토글은 두지 않습니다 — 소진율의 출처가 이것뿐이라 끄면 빈 화면이 남고, 정말 끄고 싶을 때는 로그아웃이 더 확실합니다.
 
 관련 코드: [ClaudeServerUsage.swift](ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeServerUsage.swift) · [ClaudeLoginWindow.swift](ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeLoginWindow.swift) · [ClaudeWebSession.swift](ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeWebSession.swift) · [OrganizationChoice.swift](ClaudeUsageWidgetApp/Shared/OrganizationChoice.swift)
 
@@ -145,13 +192,17 @@ ClaudeUsageWidgetApp/
 │   ├── ClaudeUsageReader.swift      # JSONL 증분 파싱 및 창·일·주 집계
 │   ├── UsageSharedStore.swift       # 스냅샷·설정 파일 읽기/쓰기
 │   ├── UsageBarView.swift           # 진행 바 + 경고 단계 색
-│   └── MenuBarStyle.swift           # 메뉴바 아이콘 디자인 목록 (설정 파일에 저장)
+│   ├── MenuBarStyle.swift           # 메뉴바 아이콘 디자인 목록 (설정 파일에 저장)
+│   ├── BrowserCookieSource.swift    # 지원 브라우저 목록·프로필 경로·UA 조립
+│   └── ClaudeSessionSource.swift    # 쿠키 원본 선택값 → 시도할 소스 순서 (순수 로직)
 ├── ClaudeUsageWidgetApp/            # 메뉴바 앱 타겟 (샌드박스 OFF)
 │   ├── ClaudeUsageWidgetAppApp.swift  # MenuBarExtra + Settings 씬
 │   ├── UsageMonitor.swift             # 5초 로컬 + 60초 서버 조회, 스냅샷 발행
 │   ├── ClaudeServerUsage.swift        # claude.ai 실측 조회 (조직 선택·실패 분류 배선)
 │   ├── ClaudeLoginWindow.swift        # 자체 로그인 창 (WKWebView + Google SSO 팝업)
 │   ├── ClaudeWebSession.swift         # WKWebsiteDataStore 의 claude.ai 쿠키 읽기
+│   ├── ClaudeSessionSource+App.swift  # 기본 브라우저 판별 + 소스별 쿠키 꺼내기 + 키 캐시
+│   ├── BrowserCookieStore.swift       # 브라우저 쿠키 DB 복호화 (키체인·AES·SQLite)
 │   ├── MenuBarIcon.swift              # 메뉴바 링·막대 아이콘 렌더링 (AppKit)
 │   ├── UsagePanel.swift               # 메뉴바 팝오버 UI
 │   └── UsageSettingsView.swift        # 디자인 고르기 + 연동 계정·조직·갱신 주기
@@ -273,7 +324,7 @@ cd claude-usage-widget
 
 코드를 수정하거나 `git pull` 한 뒤에는 `./install.sh` 를 다시 실행하면 됩니다.
 
-> 사용량을 보려면 **설정 → 실측 사용량 (claude.ai) → «Claude 로그인»** 을 눌러 앱 안의 창에서 로그인하세요. 로그인 전에는 소진율이 표시되지 않습니다. 키체인 접근 허용 창은 뜨지 않습니다 (자세한 배경은 위 [실측 사용량](#-실측-사용량--자체-로그인으로-계정-전체-사용량-불러오기) 절).
+> 사용량을 보려면 **설정 → 실측 사용량 (claude.ai) → 연동 계정** 의 버튼을 누르세요. 시스템 기본 브라우저에서 claude.ai가 열리고, 거기서 계정을 고르면(이미 로그인돼 있으면 고를 것도 없이) 앱이 그 세션을 가져옵니다. 로그인 전에는 소진율이 표시되지 않습니다 (자세한 배경은 위 [실측 사용량](#-실측-사용량--로그인-세션으로-계정-전체-사용량-불러오기) 절).
 
 ### 로그인 시 자동 실행
 
