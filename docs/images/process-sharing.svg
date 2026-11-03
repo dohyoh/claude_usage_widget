@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 320" width="840" height="320"
+     font-family="-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', 'Noto Sans KR', sans-serif">
+  <rect width="840" height="320" rx="16" fill="#171614"/>
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6E675E"/>
+    </marker>
+  </defs>
+
+  <text x="32" y="38" fill="#A9A29A" font-size="13" letter-spacing="0.4">샌드박스 경계와 프로세스 간 공유</text>
+  <text x="32" y="58" fill="#6E675E" font-size="11">조회는 샌드박스가 꺼진 메뉴바 앱만 합니다. 위젯은 그 결과를 파일로 읽기만 합니다</text>
+
+  <!-- 데이터 소스 -->
+  <rect x="28" y="92" width="186" height="56" rx="12" fill="#232120" stroke="#3A3632" stroke-width="1"/>
+  <text x="121" y="117" fill="#FBF8F3" font-size="12" font-weight="600" text-anchor="middle">claude.ai</text>
+  <text x="121" y="134" fill="#6E675E" font-size="10" text-anchor="middle">소진율 % · 리셋 시각</text>
+
+  <rect x="28" y="166" width="186" height="56" rx="12" fill="#232120" stroke="#3A3632" stroke-width="1"/>
+  <text x="121" y="191" fill="#FBF8F3" font-size="12" font-weight="600" text-anchor="middle">~/.claude/projects</text>
+  <text x="121" y="208" fill="#6E675E" font-size="10" text-anchor="middle">토큰 수 · 모델별 분해</text>
+
+  <path d="M 222 120 L 244 120 L 244 150 L 262 150" fill="none" stroke="#6E675E" stroke-width="1.5" marker-end="url(#a2)"/>
+  <path d="M 222 194 L 244 194 L 244 164 L 262 164" fill="none" stroke="#6E675E" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <!-- 메뉴바 앱 -->
+  <rect x="270" y="104" width="196" height="106" rx="14" fill="#232120" stroke="#D97757" stroke-width="1.5"/>
+  <text x="368" y="134" fill="#FBF8F3" font-size="13" font-weight="700" text-anchor="middle">메뉴바 앱</text>
+  <rect x="306" y="146" width="124" height="20" rx="10" fill="#2C2926"/>
+  <text x="368" y="160" fill="#A9A29A" font-size="10" text-anchor="middle">App Sandbox OFF</text>
+  <text x="368" y="184" fill="#6E675E" font-size="10" text-anchor="middle">웹뷰 · 네트워크 · 파일 읽기</text>
+  <text x="368" y="199" fill="#6E675E" font-size="10" text-anchor="middle">5초마다 스냅샷 발행</text>
+
+  <line x1="474" y1="157" x2="508" y2="157" stroke="#6E675E" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <!-- 스냅샷 파일 -->
+  <path d="M 516 122 h 110 l 16 16 v 56 h -126 z" fill="#2C2926" stroke="#3A3632" stroke-width="1"/>
+  <path d="M 626 122 v 16 h 16" fill="none" stroke="#3A3632" stroke-width="1"/>
+  <text x="579" y="156" fill="#FBF8F3" font-size="10" font-weight="600" text-anchor="middle">.usage-widget-</text>
+  <text x="579" y="170" fill="#FBF8F3" font-size="10" font-weight="600" text-anchor="middle">snapshot.json</text>
+  <text x="579" y="186" fill="#6E675E" font-size="9" text-anchor="middle">백분율 · 리셋 시각만</text>
+
+  <line x1="650" y1="157" x2="676" y2="157" stroke="#6E675E" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <!-- 샌드박스 안의 위젯 -->
+  <rect x="684" y="92" width="128" height="134" rx="14" fill="none" stroke="#5C999E" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="748" y="110" fill="#5C999E" font-size="10" text-anchor="middle">App Sandbox ON</text>
+  <rect x="698" y="122" width="100" height="88" rx="12" fill="#232120" stroke="#3A3632" stroke-width="1"/>
+  <text x="748" y="152" fill="#FBF8F3" font-size="12" font-weight="700" text-anchor="middle">위젯</text>
+  <text x="748" y="174" fill="#6E675E" font-size="10" text-anchor="middle">읽기 전용</text>
+  <text x="748" y="189" fill="#6E675E" font-size="10" text-anchor="middle">entitlement 예외</text>
+
+  <!-- 주의 -->
+  <rect x="28" y="248" width="784" height="48" rx="12" fill="#1F1D1C" stroke="#2C2926" stroke-width="1"/>
+  <text x="50" y="270" fill="#E0A33E" font-size="11" font-weight="600">메뉴바 앱이 꺼져 있으면 위젯의 값은 그 시점에 멈춥니다.</text>
+  <text x="50" y="288" fill="#6E675E" font-size="11">소진율의 출처가 메뉴바 앱 하나뿐이고, 위젯은 샌드박스 안이라 claude.ai 를 직접 조회할 수 없습니다.</text>
+</svg>

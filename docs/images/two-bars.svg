@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 300" width="840" height="300"
+     font-family="-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', 'Noto Sans KR', sans-serif">
+  <rect width="840" height="300" rx="16" fill="#171614"/>
+  <text x="32" y="38" fill="#A9A29A" font-size="13" letter-spacing="0.4">바가 두 줄인 이유 — 사용량과 시간은 다른 축입니다</text>
+  <text x="32" y="58" fill="#6E675E" font-size="11">둘 다 왼쪽에서 자라므로 길이를 그대로 견줄 수 있습니다. 소진율이 같아도 판단이 달라집니다</text>
+
+  <!-- ── 왼쪽: 사용량이 시간보다 앞선 경우 ───────────── -->
+  <rect x="32" y="80" width="372" height="186" rx="14" fill="#232120"/>
+  <text x="56" y="110" fill="#A9A29A" font-size="12">5시간 창</text>
+  <text x="380" y="113" fill="#FBF8F3" font-size="20" font-weight="700" text-anchor="end">80%</text>
+
+  <rect x="56" y="128" width="324" height="6" rx="3" fill="#3A3632"/>
+  <rect x="56" y="128" width="259" height="6" rx="3" fill="#E0A33E"/>
+  <rect x="56" y="144" width="324" height="4" rx="2" fill="#2A2724"/>
+  <rect x="56" y="144" width="146" height="4" rx="2" fill="#5C999E"/>
+
+  <line x1="315" y1="124" x2="315" y2="154" stroke="#E0A33E" stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/>
+  <line x1="202" y1="124" x2="202" y2="154" stroke="#5C999E" stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/>
+
+  <text x="56" y="172" fill="#6E675E" font-size="11">2h 45m 남음</text>
+  <text x="380" y="172" fill="#6E675E" font-size="11" text-anchor="end">지난 시간 45%</text>
+
+  <rect x="56" y="192" width="324" height="52" rx="10" fill="#2C2926"/>
+  <text x="72" y="214" fill="#E0A33E" font-size="12" font-weight="600">사용량 바가 더 깁니다</text>
+  <text x="72" y="233" fill="#A9A29A" font-size="11">남은 시간보다 빨리 태우는 중 — 아껴 써야 합니다</text>
+
+  <!-- ── 오른쪽: 시간이 사용량보다 앞선 경우 ─────────── -->
+  <rect x="436" y="80" width="372" height="186" rx="14" fill="#232120"/>
+  <text x="460" y="110" fill="#A9A29A" font-size="12">5시간 창</text>
+  <text x="784" y="113" fill="#FBF8F3" font-size="20" font-weight="700" text-anchor="end">35%</text>
+
+  <rect x="460" y="128" width="324" height="6" rx="3" fill="#3A3632"/>
+  <rect x="460" y="128" width="113" height="6" rx="3" fill="#D97757"/>
+  <rect x="460" y="144" width="324" height="4" rx="2" fill="#2A2724"/>
+  <rect x="460" y="144" width="227" height="4" rx="2" fill="#5C999E"/>
+
+  <line x1="573" y1="124" x2="573" y2="154" stroke="#D97757" stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/>
+  <line x1="687" y1="124" x2="687" y2="154" stroke="#5C999E" stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/>
+
+  <text x="460" y="172" fill="#6E675E" font-size="11">1h 30m 남음</text>
+  <text x="784" y="172" fill="#6E675E" font-size="11" text-anchor="end">지난 시간 70%</text>
+
+  <rect x="460" y="192" width="324" height="52" rx="10" fill="#2C2926"/>
+  <text x="476" y="214" fill="#5C999E" font-size="12" font-weight="600">시간 바가 더 깁니다</text>
+  <text x="476" y="233" fill="#A9A29A" font-size="11">이 창은 여유가 있습니다 — 그냥 쓰면 됩니다</text>
+
+  <!-- ── 범례 ────────────────────────────────────────── -->
+  <rect x="32" y="282" width="18" height="6" rx="3" fill="#D97757"/>
+  <text x="58" y="289" fill="#6E675E" font-size="11">사용량 5pt (작은 위젯 4pt) · 70% 주황 · 90% 빨강</text>
+  <rect x="420" y="283" width="18" height="4" rx="2" fill="#5C999E"/>
+  <text x="446" y="289" fill="#6E675E" font-size="11">창에서 지난 시간 3pt · 한 톤, 경고 단계 없음</text>
+</svg>
