@@ -57,15 +57,18 @@ extension ClaudeSessionSource {
 extension ClaudeSessionSource {
     enum JarOutcome {
         case found(ClaudeCookieJar)
-        case problem(String)
+        case problem(SessionProblem)
     }
 
     /// 이 소스의 claude.ai 쿠키로 jar 를 만든다.
+    ///
+    /// 실패는 `SessionProblem` 으로 분류해 올린다. 여러 소스를 차례로 시도하므로, 모두
+    /// 실패했을 때 어느 사유를 보여줄지 고르려면 문자열이 아니라 종류가 필요하다.
     func jar() async -> JarOutcome {
         switch self {
         case .appWebView:
             let jar = await ClaudeWebSession.currentJar()
-            guard jar.hasSession else { return .problem(ServerFailure.needsSignIn.message) }
+            guard jar.hasSession else { return .problem(.needsSignIn(ServerFailure.needsSignIn.message)) }
             return .found(jar)
 
         case .browser(let source):
@@ -75,11 +78,13 @@ extension ClaudeSessionSource {
                 await BrowserKeyCache.shared.store(key, for: source.id)
                 let jar = ClaudeCookieJar(cookies: cookies, userAgent: source.userAgent)
                 guard jar.hasSession else {
-                    return .problem("\(source.displayName)에 claude.ai 로그인 세션이 없습니다. «기본 브라우저로 로그인»을 눌러 로그인한 뒤 «지금 다시 조회»를 누르세요.")
+                    return .problem(.needsSignIn("\(source.displayName)에 claude.ai 로그인 세션이 없습니다. «기본 브라우저로 로그인»을 눌러 로그인한 뒤 «지금 다시 조회»를 누르세요."))
                 }
                 return .found(jar)
+            } catch let error as BrowserCookieStore.LoadError where error.isPermissionDenied {
+                return .problem(.accessDenied(error.localizedDescription))
             } catch {
-                return .problem("\(source.displayName) 쿠키를 읽을 수 없습니다: \(error.localizedDescription)")
+                return .problem(.unreadable("\(source.displayName) 쿠키를 읽을 수 없습니다: \(error.localizedDescription)"))
             }
         }
     }
@@ -113,5 +118,21 @@ enum ClaudeLogin {
     /// 그대로 열린다 — 앱이 자기 창을 띄우지 않는다.
     static func openInDefaultBrowser() {
         NSWorkspace.shared.open(url)
+    }
+}
+
+/// 시스템 설정의 개인정보 보호 패널로 보낸다.
+enum PrivacySettings {
+    /// 전체 디스크 접근 패널.
+    ///
+    /// macOS 27 의 앱 데이터 보호(`kTCCServiceSystemPolicyAppDataDetailed`)는 브라우저
+    /// 프로필 폴더의 열거·열기를 막는다. «파일 및 폴더» 패널은 OS 가 한 번이라도 물어본
+    /// 앱만 올라오는데 이 보호는 묻지 않고 막는 경우가 있어, 사용자가 직접 추가할 수 있는
+    /// 전체 디스크 접근으로 보낸다.
+    static let fullDiskAccess = URL(string:
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!
+
+    static func openFullDiskAccess() {
+        NSWorkspace.shared.open(fullDiskAccess)
     }
 }

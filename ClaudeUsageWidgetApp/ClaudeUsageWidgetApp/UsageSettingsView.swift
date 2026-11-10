@@ -86,7 +86,7 @@ struct UsageSettingsView: View {
             } header: {
                 Text("실측 사용량 (claude.ai)")
             } footer: {
-                Text("claude.ai에 로그인한 세션으로 그 계정 전체(코드·데스크톱·웹)의 실측 소진율을 가져옵니다. 연동 계정의 버튼은 시스템 기본 브라우저에서 claude.ai를 열어 거기서 계정을 고르게 합니다 — 그 브라우저에 이미 로그인돼 있으면 고를 것도 없이 바로 가져오고, 지금 로그인하면 끝나는 즉시 자동으로 가져옵니다(«지금 다시 조회»를 누르지 않아도 됩니다). 지원 브라우저는 Chromium 계열(Chrome·Edge·Brave·웨일·Arc·Vivaldi)과 Firefox이고, 브라우저 쿠키를 처음 읽을 때 키체인 접근 허용 창이 한 번 뜹니다. Safari는 쿠키가 전체 디스크 접근이 필요한 형식이라 읽을 수 없어, Safari가 기본 브라우저면 앱 안의 로그인 창으로 넘어갑니다. «쿠키 원본»은 세션을 어디서 읽을지 직접 고를 때 씁니다.")
+                Text("claude.ai에 로그인한 세션으로 그 계정 전체(코드·데스크톱·웹)의 실측 소진율을 가져옵니다. 연동 계정의 버튼은 시스템 기본 브라우저에서 claude.ai를 열어 거기서 계정을 고르게 합니다 — 그 브라우저에 이미 로그인돼 있으면 고를 것도 없이 바로 가져오고, 지금 로그인하면 끝나는 즉시 자동으로 가져옵니다(«지금 다시 조회»를 누르지 않아도 됩니다). 지원 브라우저는 Chromium 계열(Chrome·Edge·Brave·웨일·Arc·Vivaldi)과 Firefox이고, 브라우저 쿠키를 처음 읽을 때 키체인 접근 허용 창이 한 번 뜹니다. macOS 27부터는 OS가 브라우저 프로필 폴더를 보호해(앱 데이터 보호) 전체 디스크 접근을 허용하기 전까지 브라우저 쿠키를 읽지 못합니다 — 권한을 주지 않으려면 «앱 안의 로그인 창»을 쓰세요. Safari는 쿠키 형식 자체가 달라 어느 경우에도 읽을 수 없습니다. «쿠키 원본»은 세션을 어디서 읽을지 직접 고를 때 씁니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -250,6 +250,23 @@ struct UsageSettingsView: View {
         }
     }
 
+    /// OS 가 쿠키 저장소를 막았을 때의 복구 수단.
+    ///
+    /// 권한을 주는 쪽과, 권한이 필요 없는 쪽 — 둘 다 둔다. 전체 디스크 접근을 주기 싫은
+    /// 사용자가 더 많을 것이므로 앱 로그인 창 쪽이 막다른 길이 되지 않아야 한다.
+    @ViewBuilder private var recovery: some View {
+        HStack(spacing: 12) {
+            Button("전체 디스크 접근 열기") { PrivacySettings.openFullDiskAccess() }
+            Button("앱 안의 로그인 창으로 전환") { monitor.useAppLoginWindow() }
+        }
+        .buttonStyle(.link)
+        .font(.caption)
+        Text("허용한 뒤 «지금 다시 조회»를 누르세요. 그래도 같은 사유가 나오면 앱을 다시 켜세요.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
     /// 조직 선택. 한 로그인이 여러 조직에 속하면 어느 조직을 보느냐로 숫자가 달라진다.
     @ViewBuilder private var organizationPicker: some View {
         if monitor.availableOrganizations.count > 1 {
@@ -269,16 +286,30 @@ struct UsageSettingsView: View {
     @ViewBuilder private var serverStatus: some View {
         if let server = monitor.snapshot.server {
             if let reason = server.failureReason {
-                Label(reason, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if server.isUsable {
-                if let notice = server.fallbackNotice {
-                    Label(notice, systemImage: "info.circle")
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(reason, systemImage: "exclamationmark.triangle")
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
+                    // 권한이 막힌 실패는 사유만 읽어서는 빠져나올 수 없다. 두 갈래 —
+                    // 권한을 주거나, 권한이 필요 없는 소스로 옮기거나 — 를 그대로 둔다.
+                    if monitor.serverProblem?.needsUserAction == true {
+                        recovery
+                    }
+                }
+            } else if server.isUsable {
+                if let notice = server.fallbackNotice {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(notice, systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        // 폴백으로 숫자는 나왔어도 고른 소스는 여전히 막혀 있다.
+                        // 실패했을 때와 똑같은 두 갈래를 여기서도 내준다.
+                        if monitor.serverProblem?.needsUserAction == true {
+                            recovery
+                        }
+                    }
                 }
                 if let five = server.fiveHour {
                     LabeledContent("5시간 창") {

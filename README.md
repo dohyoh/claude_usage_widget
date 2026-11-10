@@ -89,6 +89,7 @@ cd claude-usage-widget
 | [설계](docs/architecture.md) | 파일 구조 · 샌드박스 · 프로세스 간 공유 · 기술 스택 |
 | [배포 패키징](docs/packaging.md) | DMG · 서명 · 공증 · Homebrew Cask · 배포 이미지 |
 | [개발](docs/development.md) | 개발 중 빌드 · 테스트 · Shared 폴더를 두 타겟이 쓰는 방법 |
+| [결정 기록 (ACR)](docs/acr/) | 코드가 말하지 않는 배경과 버린 선택지 |
 
 ---
 

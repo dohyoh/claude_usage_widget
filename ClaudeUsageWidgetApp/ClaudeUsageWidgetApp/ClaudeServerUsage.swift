@@ -27,15 +27,22 @@ struct ServerFetchResult: Sendable {
     let organizations: [OrganizationSummary]
     /// 세션을 실제로 쓴 소스의 이름(앱 로그인 창 / 브라우저 이름). 실패했으면 nil.
     let sourceName: String?
+    /// 실패했다면 그 사유의 종류. 설정 화면이 복구 버튼을 띄울지 여기서 판단한다.
+    ///
+    /// 스냅샷에는 문구(`ServerUsage.failureReason`)만 담긴다 — 위젯은 사유를 읽어 주기만
+    /// 하면 되고, 사유에 따라 행동이 갈리는 쪽은 설정 화면뿐이다.
+    let problem: SessionProblem?
 
     init(usage: ServerUsage,
          account: AccountCache?,
          organizations: [OrganizationSummary],
-         sourceName: String? = nil) {
+         sourceName: String? = nil,
+         problem: SessionProblem? = nil) {
         self.usage = usage
         self.account = account
         self.organizations = organizations
         self.sourceName = sourceName
+        self.problem = problem
     }
 }
 
@@ -43,8 +50,12 @@ enum ClaudeServerUsage {
     /// 실측 사용량을 한 번 가져온다. 실패해도 throw 하지 않고 사유를 채워 반환한다.
     ///
     /// 세션은 설정의 쿠키 원본이 정한 순서대로 찾는다(`ClaudeSessionSource.candidates`).
-    /// 앞의 소스가 «재로그인이 필요하다»고 할 때만 다음 소스로 넘어간다 — 속도 제한이나
-    /// 서버 오류에 소스를 바꾸면 사용자가 보는 계정이 네트워크 사정에 따라 흔들린다.
+    /// 앞의 소스에서 **세션을 꺼내지 못했거나** 그 세션이 «재로그인이 필요하다»고 할 때만
+    /// 다음 소스로 넘어간다 — 속도 제한이나 서버 오류에 소스를 바꾸면 사용자가 보는 계정이
+    /// 네트워크 사정에 따라 흔들린다.
+    ///
+    /// 모두 실패하면 `SessionProblem.preferred` 가 보여줄 사유를 고르고, 고른 소스가 아닌
+    /// 쪽으로 성공했으면 `announcing` 이 그 사실을 결과에 적는다.
     ///
     /// - Parameters:
     ///   - config: 쿠키 원본과 볼 조직(`organizationUuid`)을 읽는다.
@@ -53,34 +64,78 @@ enum ClaudeServerUsage {
                       config: UsageConfig,
                       cachedAccount: AccountCache?) async -> ServerFetchResult {
         let (sources, problem) = ClaudeSessionSource.candidates(for: config.cookieSource)
-        guard !sources.isEmpty else {
-            return ServerFetchResult(usage: .failed(problem ?? ServerFailure.needsSignIn.message, at: now),
+        guard let preferred = sources.first else {
+            let reason = SessionProblem.unreadable(problem ?? ServerFailure.needsSignIn.message)
+            return ServerFetchResult(usage: .failed(reason.message, at: now),
                                      account: nil,
-                                     organizations: [])
+                                     organizations: [],
+                                     problem: reason)
         }
 
-        var lastFailure: ServerFetchResult?
+        var failure: SessionProblem?
+        var organizations: [OrganizationSummary] = []
         for source in sources {
             switch await source.jar() {
-            case .problem(let message):
-                // 이 소스엔 세션이 없다. 다음 소스가 있으면 거기서 찾는다.
-                lastFailure = ServerFetchResult(usage: .failed(message, at: now),
-                                                account: nil,
-                                                organizations: [])
+            case .problem(let reason):
+                // 이 소스엔 세션이 없거나 볼 수 없다. 다음 소스가 있으면 거기서 찾는다.
+                failure = SessionProblem.preferred(failure, reason)
             case .found(let jar):
                 let attempt = await fetch(now: now,
                                           jar: jar,
                                           sourceName: source.displayName,
                                           config: config,
                                           cachedAccount: cachedAccount)
-                guard attempt.canRetryElsewhere else { return attempt.result }
-                lastFailure = attempt.result
+                guard attempt.canRetryElsewhere else {
+                    return announcing(attempt.result,
+                                      preferred: preferred,
+                                      used: source,
+                                      because: failure)
+                }
+                if let reason = attempt.result.problem {
+                    failure = SessionProblem.preferred(failure, reason)
+                }
+                if !attempt.result.organizations.isEmpty {
+                    organizations = attempt.result.organizations
+                }
             }
         }
 
-        return lastFailure ?? ServerFetchResult(usage: .failed(ServerFailure.needsSignIn.message, at: now),
-                                                account: nil,
-                                                organizations: [])
+        let reason = failure ?? .needsSignIn(ServerFailure.needsSignIn.message)
+        return ServerFetchResult(usage: .failed(reason.message, at: now),
+                                 account: nil,
+                                 organizations: organizations,
+                                 problem: reason)
+    }
+
+    /// 사용자가 고른 소스가 아닌 쪽으로 조회했으면 그 사실을, **넘어온 이유와 함께** 적는다.
+    ///
+    /// 조회 자체는 성공했으므로 실패가 아니다. 다만 다른 소스는 곧 다른 로그인일 수 있어,
+    /// 조용히 넘어가면 사용자가 남의 계정 숫자를 자기 것으로 읽는다.
+    ///
+    /// 이유까지 적는 까닭은, 성공한 조회에는 실패 사유 자리(`failureReason`)가 없어서다.
+    /// «Chrome 을 쓸 수 없어 앱 세션으로 조회했습니다» 만 남으면 사용자는 왜 못 쓰는지도,
+    /// 고른 소스를 어떻게 되살리는지도 알 수 없다.
+    private static func announcing(_ result: ServerFetchResult,
+                                   preferred: ClaudeSessionSource,
+                                   used: ClaudeSessionSource,
+                                   because problem: SessionProblem?) -> ServerFetchResult {
+        guard used != preferred, result.usage.failureReason == nil else { return result }
+        var usage = result.usage
+        var notice = "«\(preferred.displayName)» 세션을 쓸 수 없어 «\(used.displayName)» 으로"
+            + " 조회했습니다. 계정이 다를 수 있습니다."
+        if let problem, problem.needsUserAction { notice += " \(problem.message)" }
+        usage.fallbackNotice = [usage.fallbackNotice, notice]
+            .compactMap { $0 }
+            .joined(separator: " ")
+        // 조회는 성공했지만 사용자가 손쓸 거리는 남아 있다. 사유를 들고 가야 설정이
+        // 긴 안내문 대신 버튼을 띄울 수 있다. 권한 문제가 아닌 사유는 들고 가지 않는다 —
+        // 성공한 결과에 «로그인하세요» 가 붙으면 읽는 쪽이 실패로 오해한다.
+        let carried = (problem?.needsUserAction == true) ? problem : result.problem
+        return ServerFetchResult(usage: usage,
+                                 account: result.account,
+                                 organizations: result.organizations,
+                                 sourceName: result.sourceName,
+                                 problem: carried)
     }
 
     /// 소스 하나로 끝까지 조회해 본 결과.
@@ -95,27 +150,29 @@ enum ClaudeServerUsage {
                               sourceName: String,
                               config: UsageConfig,
                               cachedAccount: AccountCache?) async -> Attempt {
-        func failed(_ message: String,
+        func failed(_ problem: SessionProblem,
                     organizations: [OrganizationSummary] = [],
                     retry: Bool = false) -> Attempt {
-            Attempt(result: ServerFetchResult(usage: .failed(message, at: now),
+            Attempt(result: ServerFetchResult(usage: .failed(problem.message, at: now),
                                               account: nil,
-                                              organizations: organizations),
+                                              organizations: organizations,
+                                              sourceName: sourceName,
+                                              problem: problem),
                     canRetryElsewhere: retry)
         }
 
         guard let fingerprint = jar.sessionFingerprint else {
-            return failed(ServerFailure.needsSignIn.message, retry: true)
+            return failed(.needsSignIn(ServerFailure.needsSignIn.message), retry: true)
         }
 
         // 1. 조직 목록.
         let organizations: [OrganizationSummary]
         switch await UsageAPI.get("/organizations", jar: jar) {
         case .failure(let failure):
-            return failed(failure.message, retry: failure == .needsSignIn)
+            return failed(failure.sessionProblem, retry: failure == .needsSignIn)
         case .success(let data):
             guard let list = OrganizationSummary.list(fromJSON: data), !list.isEmpty else {
-                return failed("조직 목록을 읽을 수 없습니다.")
+                return failed(.unreadable("조직 목록을 읽을 수 없습니다."))
             }
             organizations = list
         }
@@ -125,20 +182,22 @@ enum ClaudeServerUsage {
                                                preferred: config.organizationUuid,
                                                lastActive: jar.lastActiveOrg)
         guard let organization = choice.organization else {
-            return failed("사용량을 볼 수 있는 조직이 없습니다.", organizations: organizations)
+            return failed(.unreadable("사용량을 볼 수 있는 조직이 없습니다."),
+                          organizations: organizations)
         }
 
         // 3. 사용량.
         var usage: ServerUsage
         switch await UsageAPI.get("/organizations/\(organization.uuid)/usage", jar: jar) {
         case .failure(let failure):
-            return failed(failure.message,
+            return failed(failure.sessionProblem,
                           organizations: organizations,
                           retry: failure == .needsSignIn)
         case .success(let data):
             guard let decoded = UsageAPI.decodeUsage(data, now: now,
                                                      organizationName: organization.name) else {
-                return failed("사용량 응답을 읽을 수 없습니다.", organizations: organizations)
+                return failed(.unreadable("사용량 응답을 읽을 수 없습니다."),
+                              organizations: organizations)
             }
             usage = decoded
         }

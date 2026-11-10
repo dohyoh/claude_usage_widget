@@ -40,9 +40,11 @@
 | 선택 | 세션을 읽는 곳 |
 | --- | --- |
 | **자동** (기본) | 앱 세션 → 만료(401)되면 기본 브라우저 |
-| 앱 안의 로그인 창 | `WKWebsiteDataStore` |
-| 기본 브라우저 | 그 브라우저의 쿠키 저장소 |
-| 특정 브라우저 | 고른 브라우저의 쿠키 저장소 |
+| 앱 안의 로그인 창 | `WKWebsiteDataStore` 하나만 |
+| 기본 브라우저 | 그 브라우저의 쿠키 저장소 → 읽을 수 없으면 앱 세션 |
+| 특정 브라우저 | 고른 브라우저의 쿠키 저장소 → 읽을 수 없으면 앱 세션 |
+
+브라우저를 고른 경우에도 **앱 세션이 마지막 후보로 남습니다.** OS 가 브라우저 프로필 폴더를 통째로 막을 수 있어서(바로 아래), 후보가 하나뿐이면 그 순간 빠져나올 길이 없어지기 때문입니다. 고른 소스가 아닌 쪽으로 넘어갔으면 패널과 설정이 그 사실을 알립니다 — 다른 소스는 곧 다른 로그인일 수 있어, 조용히 넘어가면 남의 계정 숫자를 자기 것으로 읽게 됩니다. «앱 안의 로그인 창»을 직접 고른 경우에는 폴백이 붙지 않습니다. 그 선택은 «브라우저를 쓰지 않겠다»는 뜻입니다.
 
 연동 계정 버튼으로 로그인하면 원본이 «기본 브라우저» 로 바뀌므로, 보통은 이 설정을 직접 건드릴 일이 없습니다.
 
@@ -62,7 +64,24 @@ Firefox:   ~/Library/Application Support/Firefox/Profiles/<프로필>/cookies.sq
 - 브라우저 쿠키를 처음 읽을 때 **키체인 접근 허용 창이 한 번** 뜹니다(«항상 허용»). 복호화 키는 앱 실행당 브라우저별로 한 번만 유도해 메모리에 캐시합니다.
 - 프로필이 여러 개면(`Default`, `Profile 1` …) 최근에 쓴 프로필부터 보며 세션 쿠키가 있는 첫 프로필을 씁니다.
 - 브라우저가 쥔 파일을 잠그지 않도록 사본을 떠서 읽고, 방금 받은 쿠키가 아직 `-wal`에만 있을 수 있어 곁다리 파일도 함께 복사합니다.
-- **Safari는 지원하지 않습니다.** 쿠키가 전체 디스크 접근(TCC) 권한이 필요한 `binarycookies` 형식이라 읽을 수 없습니다. Safari가 기본 브라우저면 «자동»은 앱 세션만 쓰고, «기본 브라우저»를 고르면 그 사유를 그대로 알립니다.
+- **Safari는 지원하지 않습니다.** 쿠키가 `binarycookies` 형식이라 읽을 수 없습니다. Safari가 기본 브라우저면 «자동»은 앱 세션만 쓰고, «기본 브라우저»를 고르면 그 사유를 그대로 알립니다.
+
+#### macOS 27 부터는 권한이 필요합니다
+
+macOS 27 이 TCC 서비스 `kTCCServiceSystemPolicyAppDataDetailed` 로 **브라우저 프로필 폴더를 보호**하기 시작했습니다. 보호 목록에는 Chrome·Brave·Edge·Firefox 가 모두 올라 있어, **Safari 를 뺀 지원 브라우저 전부**가 해당합니다.
+
+권한이 없는 앱에게 이 보호는 이렇게 보입니다 — 메타데이터(`stat`)는 통과하고, **열거(`readdir`)와 열기(`open`)만 막힙니다.** 그래서 «파일이 없다»와 구분하기 어렵고, 실제로 1.4 는 막힌 것을 «쿠키 파일이 없습니다» 로 보고했습니다.
+
+```
+전체 디스크 접근을 허용한다        → 브라우저 쿠키를 그대로 쓴다
+쿠키 원본을 «앱 안의 로그인 창»    → 권한 없이 쓴다 (앱에서 한 번 로그인)
+```
+
+**OS 는 허용 창을 띄우지 않습니다.** 묻지 않고 막으므로, 권한은 사용자가 직접 추가해야 합니다. 그래서 설정의 사유 아래에 두 갈래를 버튼으로 둡니다. 권한을 허용한 뒤 «지금 다시 조회»를 눌러도 같은 사유가 나오면 앱을 다시 켜세요.
+
+브라우저가 막혀도 조회가 멈추지는 않습니다 — 앱 세션이 있으면 그쪽으로 넘어가고, 넘어간 사실과 사유를 함께 알립니다.
+
+→ 배경과 버린 선택지는 [ACR-0001](acr/0001-macos-27-app-data-protection.md)
 - **UA는 쿠키를 꺼낸 곳에 맞춥니다.** `cf_clearance`가 UA에 묶여 있어서, 브라우저 쿠키를 웹뷰의 Safari UA로 보내면 같은 쿠키인데도 Cloudflare 챌린지를 받을 수 있습니다. 그래서 `ClaudeCookieJar`가 UA를 쿠키와 함께 들고 다니고, Chromium 계열이면 설치된 그 브라우저의 실제 메이저 버전으로 Chrome UA를 만듭니다. (TLS 지문까지 맞추지는 못하므로, 앱 로그인 창 쪽이 Cloudflare 관점에서는 여전히 더 안전합니다.)
 
 ### 앱 로그인 창으로 세션 확보 (Safari가 기본이거나 직접 골랐을 때)
@@ -163,10 +182,11 @@ User-Agent: <그 쿠키를 꺼낸 곳의 UA>
 - **앱을 지우면 세션도 지웁니다**: `./uninstall.sh` 는 설정과 달리 `--purge` 없이도 웹 저장소를 지웁니다 — 앱을 지웠는데 로그인이 디스크에 남아 있으면 안 되기 때문입니다.
 - **조회 주기 설정**: 설정 → 실측 사용량 (claude.ai) → **갱신 주기** 에서 30초·1분(기본)·3분·5분·10분·30분·**수동** 중 고릅니다. '수동'은 앱 시작 때 1회만 가져오고 이후엔 패널의 새로고침 버튼으로만 갱신합니다.
 - **세션이 만료되면**(401/403) 다시 로그인하라고 알립니다. 429·5xx 는 일시적 실패로 보고 재로그인을 요구하지 않습니다 — 멀쩡한 세션을 버리게 만들면 안 됩니다.
+- **사유가 여럿이면 권한 거부가 앞섭니다.** 소스를 차례로 시도하므로 실패 사유도 여럿 생길 수 있습니다. 권한 거부는 사용자가 손쓰지 않으면 영영 풀리지 않는 유일한 사유라, 뒤에 시도한 소스의 «로그인하세요»에 덮이지 않게 합니다 — 덮이면 엉뚱한 곳에서 로그인만 반복하게 됩니다.
 - **계정을 바꾸려면**: 설정 → 실측 사용량 (claude.ai) → 연동 계정의 «계정 선택» 이 브라우저를 엽니다. 브라우저 세션은 앱이 끊을 수 없으므로(그 브라우저의 로그인입니다) 계정 전환도 거기서 합니다. 앱 안의 로그인 창을 쓰는 중이면 버튼이 «다른 계정» 이고, 웹 저장소와 계정 캐시를 비운 뒤 다시 로그인합니다. 표시만 끄는 토글은 두지 않습니다 — 소진율의 출처가 이것뿐이라 끄면 빈 화면이 남고, 정말 끄고 싶을 때는 로그아웃이 더 확실합니다.
 
 ---
 
 ## 관련 코드
 
-[ClaudeServerUsage.swift](../ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeServerUsage.swift) · [ClaudeLoginWindow.swift](../ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeLoginWindow.swift) · [ClaudeWebSession.swift](../ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeWebSession.swift) · [ClaudeSessionSource+App.swift](../ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeSessionSource+App.swift) · [BrowserCookieStore.swift](../ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/BrowserCookieStore.swift) · [OrganizationChoice.swift](../ClaudeUsageWidgetApp/Shared/OrganizationChoice.swift) · [ClaudeUsageReader.swift](../ClaudeUsageWidgetApp/Shared/ClaudeUsageReader.swift)
+[ClaudeServerUsage.swift](../ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeServerUsage.swift) · [ClaudeLoginWindow.swift](../ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeLoginWindow.swift) · [ClaudeWebSession.swift](../ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeWebSession.swift) · [ClaudeSessionSource+App.swift](../ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/ClaudeSessionSource+App.swift) · [BrowserCookieStore.swift](../ClaudeUsageWidgetApp/ClaudeUsageWidgetApp/BrowserCookieStore.swift) · [BrowserCookieSource.swift](../ClaudeUsageWidgetApp/Shared/BrowserCookieSource.swift) · [SessionProblem.swift](../ClaudeUsageWidgetApp/Shared/SessionProblem.swift) · [OrganizationChoice.swift](../ClaudeUsageWidgetApp/Shared/OrganizationChoice.swift) · [ClaudeUsageReader.swift](../ClaudeUsageWidgetApp/Shared/ClaudeUsageReader.swift)

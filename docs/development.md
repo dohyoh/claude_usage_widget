@@ -15,10 +15,14 @@ Xcode에서는 스킴을 `ClaudeUsageWidgetApp` 으로 두고 `Cmd + R`.
 ## 테스트
 
 ```bash
-xcodebuild -project ClaudeUsageWidgetApp/ClaudeUsageWidgetApp.xcodeproj -scheme ClaudeUsageWidgetApp -destination 'platform=macOS' test
+xcodebuild -project ClaudeUsageWidgetApp/ClaudeUsageWidgetApp.xcodeproj -scheme UnitTests -destination 'platform=macOS' test
 ```
 
-테스트는 `Shared/` 의 순수 로직을 향합니다 — 조직 선택 규칙, 세션 소스 순서, 조회 실패 분류, 창 경계 계산, 계정 비교, 스냅샷·설정 디코딩. 네트워크나 웹뷰가 필요한 부분은 그 바깥에 두었습니다.
+**스킴은 `UnitTests` 입니다.** `ClaudeUsageWidgetApp` 스킴에는 UI 테스트만 들어 있어, 그쪽으로 `test` 를 돌리면 단위 테스트가 한 개도 실행되지 않고 조용히 통과합니다.
+
+테스트는 `Shared/` 의 순수 로직을 향합니다 — 조직 선택 규칙, 세션 소스 순서, 조회 실패 분류, 쿠키 저장소 접근 판정, 창 경계 계산, 계정 비교, 스냅샷·설정 디코딩. 네트워크나 웹뷰가 필요한 부분은 그 바깥에 두었습니다.
+
+> 테스트 타겟이 컴파일하는 것은 `ClaudeUsageWidgetAppTests/` 와 `Shared/` 뿐입니다. 앱 타겟의 타입은 보이지 않으므로, 검증하고 싶은 로직은 `Shared/` 에 두어야 합니다.
 
 ---
 

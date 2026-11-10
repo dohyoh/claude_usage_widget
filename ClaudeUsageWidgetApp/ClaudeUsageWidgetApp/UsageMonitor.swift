@@ -58,6 +58,13 @@ final class UsageMonitor {
     /// 마지막 조회에서 세션을 실제로 쓴 소스의 이름. 설정의 상태 표시에 쓴다.
     private(set) var serverSourceName: String?
 
+    /// 마지막 조회가 실패했다면 그 사유의 종류.
+    ///
+    /// 문구는 스냅샷(`snapshot.server?.failureReason`)에 있다. 여기 따로 두는 것은
+    /// **사유에 따라 설정 화면이 다른 버튼을 띄워야** 하기 때문이다 — 권한이 막힌 것과
+    /// 로그인이 만료된 것은 사용자가 할 일이 전혀 다르다.
+    private(set) var serverProblem: SessionProblem?
+
     init() {
         self.config = UsageSharedStore.loadConfig()
         self.serverAccount = UsageSharedStore.loadAccount()
@@ -96,6 +103,19 @@ final class UsageMonitor {
         refreshAll()
         ClaudeLogin.openInDefaultBrowser()
         watchForBrowserSignIn(source: source)
+    }
+
+    /// 쿠키 원본을 앱 안의 로그인 창으로 바꾸고 곧바로 로그인을 띄운다.
+    ///
+    /// 브라우저 프로필이 OS 에 막혔을 때(macOS 27 의 앱 데이터 보호) 사용자가 권한을 주지
+    /// 않고도 한 번에 빠져나오는 길이다. 원본을 함께 바꾸는 이유는, 바꾸지 않으면 다음
+    /// 조회가 다시 막힌 브라우저부터 보기 때문이다.
+    func useAppLoginWindow() {
+        config.cookieSourceID = CookieSourceSelection.app
+        ClaudeLoginWindowController.shared.present { [weak self] signedIn in
+            guard signedIn else { return }
+            self?.refreshAll()
+        }
     }
 
     /// 로그인이 기본 브라우저로 열리는지 — 설정 화면의 버튼 이름에 쓴다.
@@ -220,6 +240,7 @@ final class UsageMonitor {
         // 비워 버리면 사용자가 고른 조직이 사라진 것처럼 보인다.
         if !result.organizations.isEmpty { availableOrganizations = result.organizations }
         serverSourceName = result.sourceName
+        serverProblem = result.problem
         lastServerUsage = result.usage
         // 실측이 창 경계를 알려주므로 로컬 집계도 함께 다시 만든다 — 경계가 바뀌면
         // 그 창의 요청 수·토큰도 달라진다.

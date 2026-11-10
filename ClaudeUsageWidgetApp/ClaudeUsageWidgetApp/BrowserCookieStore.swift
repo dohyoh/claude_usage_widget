@@ -25,7 +25,14 @@ import SQLite3
 
 enum BrowserCookieStore {
     enum LoadError: LocalizedError {
-        case fileMissing, openFailed, queryFailed, keychainDenied(String)
+        case fileMissing, openFailed, queryFailed
+        case keychainDenied(String)
+        /// OS 가 쿠키 저장소 접근을 막았다 — macOS 27 의 앱 데이터 보호.
+        ///
+        /// «파일이 없다»와 반드시 구분해야 한다. 같은 말로 묶으면 권한이 막힌 사용자에게
+        /// 브라우저로 로그인하라고 말하게 되고, 그 말대로 해도 아무것도 달라지지 않는다.
+        case permissionDenied(String)
+
         var errorDescription: String? {
             switch self {
             case .fileMissing: return "쿠키 파일이 없습니다"
@@ -33,7 +40,14 @@ enum BrowserCookieStore {
             case .queryFailed: return "쿠키 DB 조회에 실패했습니다"
             case .keychainDenied(let name):
                 return "\(name)의 Safe Storage 키를 읽지 못했습니다 (키체인 접근 허용 필요)"
+            case .permissionDenied(let reason): return reason
             }
+        }
+
+        /// 사용자가 권한을 주거나 쿠키 원본을 바꿔야 풀리는 실패인지.
+        var isPermissionDenied: Bool {
+            if case .permissionDenied = self { return true }
+            return false
         }
     }
 
@@ -46,40 +60,93 @@ enum BrowserCookieStore {
     /// - Returns: 읽은 쿠키와, 다음 호출에 재사용할 복호화 키.
     nonisolated static func cookies(from source: BrowserCookieSource,
                                     cachedKey: Data? = nil) throws -> (cookies: [HTTPCookie], key: Data?) {
-        let files = source.cookieFiles
-        guard !files.isEmpty else { throw LoadError.fileMissing }
+        // 저장소를 찾아본 결과가 «막혔다»면 키체인은 건드리지 않는다. 읽지도 못할 쿠키를
+        // 위해 키체인 접근 허용 창을 띄우면, 사용자는 허용하고도 같은 실패를 다시 본다.
+        let files: [URL]
+        switch source.cookieFileLookup {
+        case .found(let urls):
+            files = urls
+        case .missing:
+            throw LoadError.fileMissing
+        case .denied(let blocked):
+            // 보이지만 열 수 없다. 여기서 바로 포기하면 OS 가 허용 창을 띄울 기회가 없다 —
+            // `access(R_OK)` 는 TCC 에 묻지 않고 곧장 거짓을 돌려주기 때문이다. 실제 열기만이
+            // TCC 를 깨우므로 한 번 시도한다. 허용되면 그대로 이어 가고, 거부되면 TCC 가
+            // 기억하므로 다음부터는 창 없이 같은 자리에서 막힌다.
+            guard probeForPermission(blocked),
+                  case .found(let urls) = source.cookieFileLookup else {
+                throw LoadError.permissionDenied(source.accessDeniedMessage)
+            }
+            files = urls
+        }
 
         switch source.store {
         case .unsupported(let reason):
             throw LoadError.keychainDenied(reason)
 
         case .firefox:
-            return (pickProfile(files) { try plainCookies(file: $0) }, nil)
+            return (try pickProfile(files, source: source) { try plainCookies(file: $0) }, nil)
 
         case .chromium(let service, let account):
             // 캐시된 키가 실제로 뭔가를 복호화하면 키체인을 건드리지 않는다.
             if let cachedKey {
-                let found = pickProfile(files) { try encryptedCookies(file: $0, key: cachedKey) }
+                let found = try pickProfile(files, source: source) {
+                    try encryptedCookies(file: $0, key: cachedKey)
+                }
                 if !found.isEmpty { return (found, cachedKey) }
             }
             guard let password = SafeStorageKeychain.password(service: service, account: account) else {
                 throw LoadError.keychainDenied(source.displayName)
             }
             let key = ChromiumCrypto.deriveKey(password: password)
-            return (pickProfile(files) { try encryptedCookies(file: $0, key: key) }, key)
+            let found = try pickProfile(files, source: source) {
+                try encryptedCookies(file: $0, key: key)
+            }
+            return (found, key)
         }
     }
 
-    /// 세션 쿠키가 있는 첫 프로필을 고른다. 없으면 쿠키가 있는 첫 프로필.
-    private nonisolated static func pickProfile(_ files: [URL],
-                                                read: (URL) throws -> [HTTPCookie]) -> [HTTPCookie] {
-        var fallback: [HTTPCookie] = []
+    /// 막힌 파일을 한 번 진짜로 열어 본다 — OS 가 허용 창을 띄울 기회를 만든다.
+    ///
+    /// 여는 데 성공한 것이 하나라도 있으면 true. 내용은 쓰지 않고 곧바로 닫는다 — 여기서
+    /// 필요한 것은 «열 수 있는가» 뿐이고, 실제 읽기는 평소 경로(`withCopy`)가 한다.
+    private nonisolated static func probeForPermission(_ files: [URL]) -> Bool {
         for file in files {
-            guard let cookies = try? read(file), !cookies.isEmpty else { continue }
+            guard let handle = try? FileHandle(forReadingFrom: file) else { continue }
+            try? handle.close()
+            return true
+        }
+        return false
+    }
+
+    /// 세션 쿠키가 있는 첫 프로필을 고른다. 없으면 쿠키가 있는 첫 프로필.
+    ///
+    /// 프로필 하나가 실패해도 다음 프로필을 본다 — 쓰는 중이라 잠깐 못 읽는 경우가 있다.
+    /// 다만 **권한 거부는 삼키지 않는다.** 아무 프로필도 못 읽고 그중 권한 문제가 있었다면
+    /// 그대로 올려 보내야, 사용자가 «세션이 없다»가 아니라 «막혔다»를 듣는다.
+    private nonisolated static func pickProfile(_ files: [URL],
+                                                source: BrowserCookieSource,
+                                                read: (URL) throws -> [HTTPCookie]) throws -> [HTTPCookie] {
+        var fallback: [HTTPCookie] = []
+        var denied = false
+        for file in files {
+            let cookies: [HTTPCookie]
+            do {
+                cookies = try read(file)
+            } catch let error as LoadError where error.isPermissionDenied {
+                denied = true
+                continue
+            } catch {
+                continue
+            }
+            guard !cookies.isEmpty else { continue }
             if cookies.contains(where: { ClaudeCookieJar.sessionCookieNames.contains($0.name) }) {
                 return cookies
             }
             if fallback.isEmpty { fallback = cookies }
+        }
+        if fallback.isEmpty, denied {
+            throw LoadError.permissionDenied(source.accessDeniedMessage)
         }
         return fallback
     }
@@ -165,7 +232,16 @@ enum BrowserCookieStore {
 
         let name = source.lastPathComponent
         let copy = directory.appendingPathComponent(name, isDirectory: false)
-        try fm.copyItem(at: source, to: copy)
+        do {
+            try fm.copyItem(at: source, to: copy)
+        } catch {
+            // stat 은 통과하고 open 만 막히는 것이 앱 데이터 보호의 모습이라, 파일이 보여도
+            // 복사에서 처음 막힐 수 있다. 사본 경로는 우리가 만든 임시 폴더이므로 여기서의
+            // 권한 오류는 언제나 원본 쪽이다.
+            throw BrowserCookieSource.isPermissionDenied(error)
+                ? LoadError.permissionDenied("쿠키 파일을 열 수 없습니다 (macOS 가 접근을 막았습니다)")
+                : LoadError.openFailed
+        }
         for suffix in ["-wal", "-shm"] {
             let sidecar = source.deletingLastPathComponent()
                 .appendingPathComponent(name + suffix, isDirectory: false)

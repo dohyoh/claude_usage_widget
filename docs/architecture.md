@@ -73,7 +73,8 @@ ClaudeUsageWidgetApp/
 │   ├── ClaudeAccountResponse.swift  # /api/account 응답에서 이메일 뽑기
 │   ├── ClaudeCodeAccount.swift      # ~/.claude.json 의 oauthAccount 읽기
 │   ├── AccountIdentity.swift        # 연동 계정 ↔ Claude Code 계정 비교
-│   └── ServerFailure.swift          # 조회 실패 분류 (401 재로그인 / 429·5xx 일시적)
+│   ├── ServerFailure.swift          # 조회 실패 분류 (401 재로그인 / 429·5xx 일시적)
+│   └── SessionProblem.swift         # 조회 전체의 실패 사유 — 권한 거부 포함, 어느 사유를 보여줄지
 │
 ├── ClaudeUsageWidgetApp/            # 메뉴바 앱 타겟 (샌드박스 OFF)
 │   ├── ClaudeUsageWidgetAppApp.swift  # MenuBarExtra + Settings 씬
@@ -97,7 +98,7 @@ ClaudeUsageWidgetApp/
 └── ClaudeUsageWidgetAppUITests/
 ```
 
-`Shared/` 의 순수 로직 — 조직 선택, 세션 소스 순서, 실패 분류, 창 경계, 계정 비교 — 은 각각 테스트가 있습니다. 네트워크·웹뷰가 필요 없는 부분을 그쪽으로 밀어 두었기 때문입니다.
+`Shared/` 의 순수 로직 — 조직 선택, 세션 소스 순서, 실패 분류, 쿠키 저장소 접근 판정, 창 경계, 계정 비교 — 은 각각 테스트가 있습니다. 네트워크·웹뷰가 필요 없는 부분을 그쪽으로 밀어 두었기 때문입니다.
 
 ---
 
@@ -117,4 +118,4 @@ ClaudeUsageWidgetApp/
 
 ## 더 읽기
 
-[사용량 데이터](usage-source.md) · [화면과 표시](display.md) · [개발](development.md)
+[사용량 데이터](usage-source.md) · [화면과 표시](display.md) · [개발](development.md) · [결정 기록](acr/)

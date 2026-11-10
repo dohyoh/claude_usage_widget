@@ -78,13 +78,34 @@ struct ClaudeSessionSourceTests {
         #expect(sources == [.appWebView])
     }
 
-    @Test("특정 브라우저를 고르면 기본 브라우저와 무관하게 그것만 본다")
+    @Test("특정 브라우저를 고르면 기본 브라우저와 무관하게 그것부터 본다")
     func explicitBrowserIgnoresTheDefault() {
         let (sources, problem) = ClaudeSessionSource.candidates(for: "firefox",
                                                                 defaultBrowser: Self.chrome)
 
         #expect(problem == nil)
-        #expect(sources == [.browser(BrowserCookieSource.source(id: "firefox")!)])
+        #expect(sources.first == .browser(BrowserCookieSource.source(id: "firefox")!))
+    }
+
+    @Test("브라우저를 골라도 앱 세션이 뒤에 남는다")
+    func browserSelectionsKeepTheAppSessionAsALastResort() {
+        // macOS 27 의 앱 데이터 보호는 브라우저 프로필 폴더를 통째로 막을 수 있다.
+        // 후보가 브라우저 하나뿐이면 그 순간 사용자가 빠져나올 길이 없어진다.
+        let chosen = ClaudeSessionSource.candidates(for: "firefox", defaultBrowser: Self.chrome)
+        let byDefault = ClaudeSessionSource.candidates(for: CookieSourceSelection.defaultBrowser,
+                                                       defaultBrowser: Self.chrome)
+
+        #expect(chosen.sources.last == .appWebView)
+        #expect(byDefault.sources.last == .appWebView)
+    }
+
+    @Test("앱 로그인 창을 고르면 뒤에 아무것도 붙지 않는다")
+    func appSelectionGetsNoExtraFallback() {
+        // 앱 세션만 쓰겠다고 고른 사용자에게 브라우저 계정을 들이밀면 안 된다.
+        let (sources, _) = ClaudeSessionSource.candidates(for: CookieSourceSelection.app,
+                                                          defaultBrowser: Self.chrome)
+
+        #expect(sources == [.appWebView])
     }
 
     @Test("브라우저 소스만 브라우저로 로그인한다")
