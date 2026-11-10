@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **상태** | 적용됨 · 설치 확인 완료 |
+| **상태** | 적용됨 · 설치 확인 완료 · v1.5 에 포함 |
 | **날짜** | 2026-11-10 |
 | **범위** | `Shared/BrowserCookieSource.swift` · `Shared/SessionProblem.swift` · `Shared/ClaudeSessionSource.swift` · `ClaudeUsageWidgetApp/BrowserCookieStore.swift` · `ClaudeSessionSource+App.swift` · `ClaudeServerUsage.swift` · `UsageMonitor.swift` · `UsageSettingsView.swift` · `project.pbxproj` |
 
